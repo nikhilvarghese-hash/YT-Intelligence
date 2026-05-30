@@ -99,9 +99,9 @@ def load_settings_from_db(db: Session = Depends(get_db)):
 
 
 @router.get("/openrouter/models")
-async def get_openrouter_models(db: Session = Depends(get_db)):
+async def get_openrouter_models(key: str | None = None, db: Session = Depends(get_db)):
     import httpx
-    key = _get_setting(db, "openrouter_api_key") or app_settings.OPENROUTER_API_KEY
+    key = key or _get_setting(db, "openrouter_api_key") or app_settings.OPENROUTER_API_KEY
     if not key:
         raise HTTPException(status_code=400, detail="OpenRouter API key not set")
     async with httpx.AsyncClient(timeout=15) as client:

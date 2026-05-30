@@ -407,8 +407,10 @@ export interface OpenRouterModel {
   context_length: number
 }
 
-export const getOpenRouterModels = () =>
-  fetchAPI<{ models: OpenRouterModel[] }>('/settings/openrouter/models')
+export const getOpenRouterModels = (key?: string) =>
+  fetchAPI<{ models: OpenRouterModel[] }>(
+    `/settings/openrouter/models${key ? `?key=${encodeURIComponent(key)}` : ''}`
+  )
 
 export interface CompetitorVideo {
   id: number

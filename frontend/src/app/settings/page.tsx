@@ -39,7 +39,7 @@ export default function SettingsPage() {
     setLoadingModels(true)
     setModelsError('')
     try {
-      const { models } = await getOpenRouterModels()
+      const { models } = await getOpenRouterModels(form.openrouter_api_key)
       setOpenRouterModels(models)
     } catch (e: any) {
       setModelsError('Could not load models — check your API key')
