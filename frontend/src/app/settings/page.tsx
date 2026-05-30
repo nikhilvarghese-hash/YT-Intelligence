@@ -1,9 +1,43 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Settings, Key, Bot, Activity, Save, Eye, EyeOff } from 'lucide-react'
+import { useEffect, useState, useMemo } from 'react'
+import { Key, Bot, Activity, Save, Eye, EyeOff } from 'lucide-react'
 import { getSettings, updateSettings, getOpenRouterModels, type AppSettings, type SettingsUpdate, type OpenRouterModel } from '@/lib/api'
 import { formatNumber, formatDate } from '@/lib/utils'
+
+function ModelSearch({
+  models, value, onChange,
+}: { models: OpenRouterModel[]; value: string; onChange: (id: string) => void }) {
+  const [query, setQuery] = useState('')
+  const filtered = useMemo(() => {
+    if (!query.trim()) return models
+    const q = query.toLowerCase()
+    return models.filter(m => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
+  }, [models, query])
+
+  return (
+    <div className="space-y-1.5">
+      <input
+        type="text"
+        placeholder="Search models…"
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        className="w-full px-3 py-1.5 bg-background border border-border rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+      />
+      <select
+        size={6}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="w-full px-2 py-1 bg-background border border-border rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+      >
+        {filtered.map(m => (
+          <option key={m.id} value={m.id}>{m.name}</option>
+        ))}
+      </select>
+      <p className="text-xs text-muted-foreground">{filtered.length} of {models.length} models</p>
+    </div>
+  )
+}
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -171,44 +205,80 @@ export default function SettingsPage() {
                   )}
                 </div>
 
+                {/* Quick picks grouped by tier */}
+                <div>
+                  <p className="text-xs text-muted-foreground mb-2">Quick pick</p>
+                  {[
+                    {
+                      group: 'Auto',
+                      models: [
+                        { id: 'openrouter/auto', label: 'Auto', desc: 'OpenRouter picks the best available model' },
+                      ],
+                    },
+                    {
+                      group: 'Free',
+                      models: [
+                        { id: 'meta-llama/llama-3.1-8b-instruct:free', label: 'Llama 3.1 8B' },
+                        { id: 'mistralai/mistral-7b-instruct:free', label: 'Mistral 7B' },
+                        { id: 'google/gemma-2-9b-it:free', label: 'Gemma 2 9B' },
+                        { id: 'qwen/qwen-2-7b-instruct:free', label: 'Qwen 2 7B' },
+                      ],
+                    },
+                    {
+                      group: 'Fast',
+                      models: [
+                        { id: 'google/gemini-flash-1.5', label: 'Gemini Flash 1.5' },
+                        { id: 'google/gemini-2.0-flash-001', label: 'Gemini 2.0 Flash' },
+                        { id: 'anthropic/claude-haiku', label: 'Claude Haiku' },
+                        { id: 'openai/gpt-4o-mini', label: 'GPT-4o Mini' },
+                      ],
+                    },
+                    {
+                      group: 'Premium',
+                      models: [
+                        { id: 'anthropic/claude-sonnet-4-5', label: 'Claude Sonnet' },
+                        { id: 'openai/gpt-4o', label: 'GPT-4o' },
+                        { id: 'google/gemini-pro-1.5', label: 'Gemini Pro 1.5' },
+                        { id: 'x-ai/grok-3-mini-beta', label: 'Grok 3 Mini' },
+                      ],
+                    },
+                  ].map(({ group, models }) => (
+                    <div key={group} className="mb-2">
+                      <p className="text-xs text-muted-foreground/60 mb-1">{group}</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {models.map(m => (
+                          <button key={m.id} onClick={() => setForm(f => ({ ...f, ai_model: m.id }))}
+                            title={'desc' in m ? (m as any).desc : m.id}
+                            className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                              form.ai_model === m.id
+                                ? 'border-primary bg-primary/10 text-primary'
+                                : 'border-border text-muted-foreground hover:border-primary/50'
+                            }`}>
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Full model list (loaded on demand) */}
                 {openRouterModels.length > 0 && (
                   <div>
                     <label className="block text-xs text-muted-foreground mb-1">
-                      Model <span className="text-muted-foreground/60">({openRouterModels.length} available)</span>
+                      Browse all <span className="text-muted-foreground/60">({openRouterModels.length} models)</span>
                     </label>
-                    <select
+                    <ModelSearch
+                      models={openRouterModels}
                       value={form.ai_model || ''}
-                      onChange={e => setForm(f => ({ ...f, ai_model: e.target.value }))}
-                      className="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                    >
-                      <option value="">— choose a model —</option>
-                      {openRouterModels.map(m => (
-                        <option key={m.id} value={m.id}>{m.name}</option>
-                      ))}
-                    </select>
-                    {form.ai_model && <p className="text-xs text-muted-foreground mt-1 font-mono">{form.ai_model}</p>}
+                      onChange={id => setForm(f => ({ ...f, ai_model: id }))}
+                    />
                   </div>
                 )}
 
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1.5">Popular picks</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {[
-                      { id: 'google/gemini-flash-1.5', label: 'Gemini Flash 1.5' },
-                      { id: 'anthropic/claude-haiku', label: 'Claude Haiku' },
-                      { id: 'openai/gpt-4o-mini', label: 'GPT-4o Mini' },
-                      { id: 'meta-llama/llama-3.1-8b-instruct:free', label: 'Llama 3.1 8B (free)' },
-                      { id: 'mistralai/mistral-7b-instruct:free', label: 'Mistral 7B (free)' },
-                    ].map(m => (
-                      <button key={m.id} onClick={() => setForm(f => ({ ...f, ai_model: m.id }))}
-                        className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
-                          form.ai_model === m.id ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-primary/50'
-                        }`}>
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                {form.ai_model && (
+                  <p className="text-xs text-muted-foreground font-mono">Selected: {form.ai_model}</p>
+                )}
               </div>
             )}
 
