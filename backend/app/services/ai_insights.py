@@ -342,23 +342,41 @@ async def _ollama_analyze(prompt: str) -> str:
 
 async def _openrouter_analyze(prompt: str) -> str:
     import httpx
+    import asyncio
     model = settings.AI_MODEL or "google/gemini-flash-1.5"
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            f"{settings.OPENROUTER_BASE_URL}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
-                "HTTP-Referer": "http://localhost:3000",
-                "X-Title": "YouTube Intelligence",
-            },
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 2000,
-            },
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+    max_retries = 4
+    base_delay = 5.0
+
+    async with httpx.AsyncClient(timeout=90) as client:
+        for attempt in range(max_retries):
+            resp = await client.post(
+                f"{settings.OPENROUTER_BASE_URL}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                    "HTTP-Referer": "http://localhost:3000",
+                    "X-Title": "YouTube Intelligence",
+                },
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 2000,
+                },
+            )
+
+            if resp.status_code == 429:
+                if attempt == max_retries - 1:
+                    raise Exception(
+                        f"OpenRouter rate limit hit after {max_retries} attempts. "
+                        "Try again in a minute, or switch to a model with higher rate limits (e.g. a free tier model)."
+                    )
+                retry_after = float(resp.headers.get("Retry-After", base_delay * (2 ** attempt)))
+                await asyncio.sleep(min(retry_after, 60))
+                continue
+
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+
+    raise Exception("OpenRouter request failed after all retries")
 
 
 async def ai_analyze_videos(video_summaries: list[str], prompt_type: str, custom_prompt: str = "") -> tuple[str | None, str | None]:
