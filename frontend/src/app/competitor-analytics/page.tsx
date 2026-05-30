@@ -6,14 +6,47 @@ import {
   getQuestions, getPainPoints, getContentOpportunities, listCreators,
   getInsightStatus, runContentStrategyInsights,
   type Creator, type Question, type PainPoint, type ContentOpportunity,
-  type InsightStatus, type ContentStrategyInsight,
+  type InsightStatus, type ContentStrategyInsight, type AITopicData, type AIGapData,
 } from '@/lib/api'
 import { CreatorFilter } from '@/components/analytics/CreatorFilter'
-import { formatNumber, formatDate } from '@/lib/utils'
+import { formatNumber } from '@/lib/utils'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 
 type SubTab = 'volume' | 'explorer' | 'gaps'
 type ExplorerFilter = 'all' | 'high_demand' | 'gaps' | 'questions'
+
+function parseInsightSections(raw: string): Partial<ContentStrategyInsight> {
+  const get = (marker: string, next: string) => {
+    const s = raw.indexOf(`===${marker}===`)
+    if (s === -1) return ''
+    const e = raw.indexOf(`===${next}===`)
+    return raw.slice(s + marker.length + 6, e === -1 ? undefined : e).trim()
+  }
+
+  const volumeInsight = get('VOLUME', 'TOPICS')
+
+  // Parse TOPICS section: "TOPIC: x | ANGLE: y | URGENCY: z | HOOK: h"
+  const topicsRaw = get('TOPICS', 'GAPS')
+  const topicMap: Record<string, AITopicData> = {}
+  topicsRaw.split('\n').forEach(line => {
+    const m = line.match(/TOPIC:\s*(.+?)\s*\|\s*ANGLE:\s*(.+?)\s*\|\s*URGENCY:\s*(HIGH|MEDIUM|LOW)\s*\|\s*HOOK:\s*(.+)/i)
+    if (m) topicMap[m[1].trim()] = { angle: m[2].trim(), urgency: m[3].toUpperCase() as 'HIGH' | 'MEDIUM' | 'LOW', hook: m[4].trim() }
+  })
+
+  // Parse GAPS section: "GAP: x | WHY: y | ACTION: z"
+  const gapsRaw = get('GAPS', 'NEXT')
+  const gapMap: Record<string, AIGapData> = {}
+  gapsRaw.split('\n').forEach(line => {
+    const m = line.match(/GAP:\s*(.+?)\s*\|\s*WHY:\s*(.+?)\s*\|\s*ACTION:\s*(.+)/i)
+    if (m) gapMap[m[1].trim()] = { why: m[2].trim(), action: m[3].trim() }
+  })
+
+  // Parse NEXT section: bullet points
+  const nextRaw = get('NEXT', '___END___')
+  const nextActions = nextRaw.split('\n').map(l => l.replace(/^[•\-\*]\s*/, '').trim()).filter(Boolean)
+
+  return { volumeInsight, topicMap, gapMap, nextActions }
+}
 
 const TYPE_COLOR: Record<string, string> = {
   question: '#60a5fa',
@@ -88,7 +121,9 @@ export default function CompetitorAnalyticsPage() {
         selected.length ? selected : undefined,
         incremental,
       )
-      setInsight(result)
+      // Parse structured sections from the raw insight text
+      const parsed = result.insight ? parseInsightSections(result.insight) : {}
+      setInsight({ ...result, ...parsed })
       loadStatus(selected.length ? selected : undefined)
       if (result.error && !result.insight) setAiError(result.error)
     } catch (e: any) {
@@ -332,6 +367,12 @@ export default function CompetitorAnalyticsPage() {
               </BarChart>
             </ResponsiveContainer>
           </div>
+          {insight?.volumeInsight && (
+            <div className="mt-4 flex items-start gap-2.5 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+              <Bot className="w-3.5 h-3.5 text-primary mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-foreground/80 leading-relaxed">{insight.volumeInsight}</p>
+            </div>
+          )}
           <p className="text-xs text-muted-foreground mt-2 text-center">
             Top {volumeData.length} topics by mention count
           </p>
@@ -365,7 +406,10 @@ export default function CompetitorAnalyticsPage() {
 
           {explorerFilter === 'questions' ? (
             <div className="space-y-2">
-              {questions.map((q, i) => (
+              {questions.map((q, i) => {
+                const aiData = insight?.topicMap?.[q.question_text]
+                  ?? Object.entries(insight?.topicMap ?? {}).find(([k]) => q.question_text.toLowerCase().includes(k.toLowerCase()))?.[1]
+                return (
                 <div key={i} className="bg-card border border-border rounded-lg overflow-hidden">
                   <button
                     onClick={() => setExpanded(expanded === `q-${i}` ? null : `q-${i}`)}
@@ -373,11 +417,27 @@ export default function CompetitorAnalyticsPage() {
                   >
                     <HelpCircle className="w-4 h-4 text-blue-400 flex-shrink-0" />
                     <span className="flex-1 text-sm font-medium">{q.question_text}</span>
+                    {aiData && (
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-bold shrink-0 ${
+                        aiData.urgency === 'HIGH' ? 'bg-red-400/15 text-red-400' :
+                        aiData.urgency === 'MEDIUM' ? 'bg-amber-400/15 text-amber-400' :
+                        'bg-secondary text-muted-foreground'
+                      }`}>{aiData.urgency}</span>
+                    )}
                     <span className="text-xs bg-blue-400/10 text-blue-400 px-2 py-0.5 rounded-full shrink-0">×{q.frequency}</span>
                     {expanded === `q-${i}` ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
                   </button>
                   {expanded === `q-${i}` && (
                     <div className="px-4 pb-4 pt-3 border-t border-border space-y-4">
+                      {aiData && (
+                        <div className="flex items-start gap-2 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                          <Bot className="w-3.5 h-3.5 text-primary mt-0.5 flex-shrink-0" />
+                          <div className="text-xs space-y-1">
+                            <p><span className="text-muted-foreground">Angle:</span> <span className="text-foreground/90">{aiData.angle}</span></p>
+                            <p><span className="text-muted-foreground">Hook:</span> <span className="text-foreground/90">{aiData.hook}</span></p>
+                          </div>
+                        </div>
+                      )}
                       <div>
                         <p className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">Audience Questions</p>
                         <div className="space-y-2">
@@ -402,7 +462,8 @@ export default function CompetitorAnalyticsPage() {
                     </div>
                   )}
                 </div>
-              ))}
+                )
+              })}
               {questions.length === 0 && <p className="text-center py-10 text-muted-foreground text-sm">No questions found.</p>}
             </div>
           ) : (
@@ -411,6 +472,10 @@ export default function CompetitorAnalyticsPage() {
                 const coverageCount = o.creators_mentioning?.length ?? 0
                 const coveragePct = creators.length > 0 ? Math.round((coverageCount / creators.length) * 100) : 0
                 const isGap = coverageCount === 0
+                const aiData = insight?.topicMap?.[o.topic]
+                  ?? Object.entries(insight?.topicMap ?? {}).find(([k]) => o.topic.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(o.topic.toLowerCase()))?.[1]
+                const gapData = insight?.gapMap?.[o.topic]
+                  ?? Object.entries(insight?.gapMap ?? {}).find(([k]) => o.topic.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(o.topic.toLowerCase()))?.[1]
                 return (
                   <div key={i} className={`bg-card border rounded-lg overflow-hidden transition-colors ${
                     expanded === `o-${i}` ? 'border-blue-500/50' : 'border-border hover:border-border/80'
@@ -439,6 +504,13 @@ export default function CompetitorAnalyticsPage() {
                             <span key={c} className="text-xs px-2 py-0.5 rounded-full bg-secondary border border-border text-muted-foreground">{c}</span>
                           ))
                         }
+                        {aiData && (
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+                            aiData.urgency === 'HIGH' ? 'bg-red-400/15 text-red-400' :
+                            aiData.urgency === 'MEDIUM' ? 'bg-amber-400/15 text-amber-400' :
+                            'bg-secondary text-muted-foreground'
+                          }`}>{aiData.urgency}</span>
+                        )}
                         <span className="ml-auto">
                           {expanded === `o-${i}` ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
                         </span>
@@ -446,10 +518,21 @@ export default function CompetitorAnalyticsPage() {
                     </button>
                     {expanded === `o-${i}` && (
                       <div className="px-4 pb-4 pt-3 border-t border-border space-y-4">
+                        {(aiData || gapData) && (
+                          <div className="flex items-start gap-2 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                            <Bot className="w-3.5 h-3.5 text-primary mt-0.5 flex-shrink-0" />
+                            <div className="text-xs space-y-1">
+                              {aiData?.angle && <p><span className="text-muted-foreground">Angle:</span> <span className="text-foreground/90">{aiData.angle}</span></p>}
+                              {aiData?.hook && <p><span className="text-muted-foreground">Hook:</span> <span className="text-foreground/90">{aiData.hook}</span></p>}
+                              {gapData?.why && <p><span className="text-muted-foreground">Opportunity:</span> <span className="text-foreground/90">{gapData.why}</span></p>}
+                              {gapData?.action && (
+                                <p className="mt-1 text-amber-400 font-medium">▶ {gapData.action}</p>
+                              )}
+                            </div>
+                          </div>
+                        )}
                         <div>
-                          <p className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">
-                            Audience Questions (click to expand · tagged = your coverage)
-                          </p>
+                          <p className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">Audience Questions</p>
                           <div className="space-y-2">
                             {o.example_comments.slice(0, 4).map((c, j) => (
                               <div key={j} className="text-sm p-3 bg-secondary/20 rounded-md text-muted-foreground border border-border border-l-2 border-l-border">
@@ -505,27 +588,61 @@ export default function CompetitorAnalyticsPage() {
                 🚨 High total demand — low coverage (biggest opportunity)
               </h2>
               <div className="space-y-2 mt-3">
-                {uncoveredTopics.map((o, i) => (
-                  <div key={i} className="flex items-center gap-3 p-3 bg-card border border-border rounded-lg">
-                    <span className="text-xs font-bold text-muted-foreground w-5 text-right">{i + 1}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold">{o.topic}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Total demand: {o.frequency.toLocaleString()} questions ·{' '}
-                        {(o.creators_mentioning?.length ?? 0) === 0 ? 'No creator coverage' : `${o.creators_mentioning?.length} channel(s)`}
-                      </p>
+                {uncoveredTopics.map((o, i) => {
+                  const gapData = insight?.gapMap?.[o.topic]
+                    ?? Object.entries(insight?.gapMap ?? {}).find(([k]) => o.topic.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(o.topic.toLowerCase()))?.[1]
+                  return (
+                  <div key={i} className="bg-card border border-border rounded-lg overflow-hidden">
+                    <div className="flex items-center gap-3 p-3">
+                      <span className="text-xs font-bold text-muted-foreground w-5 text-right">{i + 1}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold">{o.topic}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Total demand: {o.frequency.toLocaleString()} questions ·{' '}
+                          {(o.creators_mentioning?.length ?? 0) === 0 ? 'No creator coverage' : `${o.creators_mentioning?.length} channel(s)`}
+                        </p>
+                        {gapData?.why && (
+                          <p className="text-xs text-primary/80 mt-1">{gapData.why}</p>
+                        )}
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <div className="text-sm font-black text-amber-400">{o.frequency.toLocaleString()}</div>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-red-400/10 text-red-400 border border-red-400/20 font-bold">UNDERCOVERED</span>
+                      </div>
                     </div>
-                    <div className="text-right flex-shrink-0">
-                      <div className="text-sm font-black text-amber-400">{o.frequency.toLocaleString()}</div>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-red-400/10 text-red-400 border border-red-400/20 font-bold">UNDERCOVERED</span>
-                    </div>
+                    {gapData?.action && (
+                      <div className="px-3 pb-3 pt-0">
+                        <div className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-400/5 border border-amber-400/20 rounded px-2.5 py-1.5">
+                          <Lightbulb className="w-3 h-3 flex-shrink-0" />
+                          <span className="font-medium">▶ {gapData.action}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                ))}
+                  )
+                })}
                 {uncoveredTopics.length === 0 && (
                   <p className="text-sm text-muted-foreground py-4 text-center">All topics have creator coverage.</p>
                 )}
               </div>
             </div>
+
+            {insight?.nextActions && insight.nextActions.length > 0 && (
+              <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
+                <div className="flex items-center gap-2 mb-3">
+                  <Bot className="w-4 h-4 text-primary" />
+                  <p className="text-sm font-semibold">AI Recommended Next Actions</p>
+                </div>
+                <ul className="space-y-2">
+                  {insight.nextActions.map((action, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-foreground/80">
+                      <span className="text-primary font-bold mt-0.5">•</span>
+                      {action}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <div>
               <h2 className="text-sm font-bold mb-1 pb-2 border-b border-border">

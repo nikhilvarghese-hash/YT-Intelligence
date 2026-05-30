@@ -470,6 +470,17 @@ export interface InsightStatus {
   is_first_run: boolean
 }
 
+export interface AITopicData {
+  angle: string
+  urgency: 'HIGH' | 'MEDIUM' | 'LOW'
+  hook: string
+}
+
+export interface AIGapData {
+  why: string
+  action: string
+}
+
 export interface ContentStrategyInsight {
   insight: string | null
   model_used: string | null
@@ -478,6 +489,11 @@ export interface ContentStrategyInsight {
   incremental_since: string | null
   last_run_at: string | null
   topics_found?: number
+  // parsed sections
+  volumeInsight?: string
+  topicMap?: Record<string, AITopicData>
+  gapMap?: Record<string, AIGapData>
+  nextActions?: string[]
 }
 
 export const getInsightStatus = (creatorIds?: number[]) => {

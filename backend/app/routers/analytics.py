@@ -496,25 +496,42 @@ async def run_competitor_insights(
     ]
     prompt_data = "\n".join(summary_lines)
 
-    prompt = f"""You are a YouTube content strategist. Analyze this audience intelligence data and provide actionable content recommendations.
+    top_questions_list = "\n".join(
+        f"  {i+1}. {q['question_text']} ({q['frequency']}×)"
+        for i, q in enumerate(sorted(questions, key=lambda x: x["frequency"], reverse=True)[:12])
+    )
+    top_opportunities_list = "\n".join(
+        f"  {i+1}. {o['topic']} ({o['frequency']}×)"
+        for i, o in enumerate(sorted(opportunities, key=lambda x: x["frequency"], reverse=True)[:12])
+    )
+
+    prompt = f"""You are a YouTube content strategist. Analyze this audience intelligence data.
 
 {prompt_data}
 
-Provide a structured analysis with these exact sections:
+Respond using EXACTLY these four section markers (keep the === delimiters intact):
 
-## 🎯 TOP 5 PRIORITY TOPICS
-For each topic: name, why it matters (mention count + gap assessment), and 2 specific video title ideas.
+===VOLUME===
+2-3 sentences interpreting the topic distribution. Which 3 topics dominate? Is demand concentrated or spread? What does this mean strategically?
 
-## 🔥 TRENDING NOW
-3-5 topics showing the highest recent demand based on the data.
+===TOPICS===
+For each of the top 10 topics below, output ONE line in this exact format (pipe-separated, no extra lines):
+TOPIC: <exact topic name> | ANGLE: <unique content angle in 8 words or less> | URGENCY: HIGH or MEDIUM or LOW | HOOK: <one punchy audience hook>
 
-## 🚨 CONTENT GAPS
-Topics with high audience demand but likely underserved — these are your biggest opportunities.
+Top topics to analyse:
+{top_questions_list}
+{top_opportunities_list}
 
-## ⚡ QUICK WIN VIDEO IDEAS
-5 specific, ready-to-film video titles based on the most common questions. Include the question pattern that inspired each.
+===GAPS===
+For each of the top 5 undercovered topics (low creator coverage, high demand), output ONE line:
+GAP: <topic> | WHY: <one sentence on why this is an opportunity> | ACTION: <specific video title to create now>
 
-Keep it concise and actionable. Focus on what to create NEXT."""
+===NEXT===
+• [action 1]
+• [action 2]
+• [action 3]
+
+Be concise. No preamble, no trailing notes outside the sections."""
 
     video_summaries = summary_lines
     insight, error = await ai_analyze_videos(video_summaries, "custom", prompt)
