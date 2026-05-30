@@ -5,7 +5,8 @@
       "Bash(npm install *)",
       "Bash(git -C \"/Volumes/HomeX/Algo/Open Algo/youtube\" status)",
       "Bash(git -C \"/Volumes/HomeX/Algo/Open Algo/youtube/frontend\" status)",
-      "Bash(git -C \"/Volumes/HomeX/Algo/Open Algo/youtube/backend\" status)"
+      "Bash(git -C \"/Volumes/HomeX/Algo/Open Algo/youtube/backend\" status)",
+      "Bash(git *)"
     ]
   }
 }
