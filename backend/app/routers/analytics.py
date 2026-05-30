@@ -21,7 +21,9 @@ from ..schemas import (
 from ..services.ai_insights import (
     detect_pain_points, extract_questions,
     detect_purchase_intent, discover_content_opportunities,
+    ai_analyze_videos,
 )
+from ..models import AppSettings
 
 router = APIRouter()
 
@@ -372,6 +374,164 @@ def delete_watchlist(watchlist_id: int, db: Session = Depends(get_db)):
     db.delete(w)
     db.commit()
     return {"detail": "Deleted"}
+
+
+# ─── AI Content Strategy Insights ────────────────────────────────────────────
+
+def _get_setting(db: Session, key: str) -> str | None:
+    row = db.query(AppSettings).filter(AppSettings.key == key).first()
+    return row.value if row else None
+
+def _set_setting(db: Session, key: str, value: str):
+    row = db.query(AppSettings).filter(AppSettings.key == key).first()
+    if row:
+        row.value = value
+        row.updated_at = datetime.utcnow()
+    else:
+        row = AppSettings(key=key, value=value)
+        db.add(row)
+    db.commit()
+
+
+@router.get("/competitor-insights/status")
+def get_competitor_insights_status(
+    creator_ids: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    id_list = [int(x) for x in creator_ids.split(",") if x.strip()] if creator_ids else None
+    last_run_str = _get_setting(db, "competitor_insights_last_run")
+    last_run_at = datetime.fromisoformat(last_run_str) if last_run_str else None
+
+    base_q = (
+        db.query(func.count(Comment.id))
+        .join(Video, Comment.video_id == Video.id)
+        .join(Creator, Video.creator_id == Creator.id)
+    )
+    if id_list:
+        base_q = base_q.filter(Creator.id.in_(id_list))
+    total_comments = base_q.scalar() or 0
+
+    new_comments = 0
+    if last_run_at:
+        new_q = (
+            db.query(func.count(Comment.id))
+            .join(Video, Comment.video_id == Video.id)
+            .join(Creator, Video.creator_id == Creator.id)
+            .filter(Comment.imported_at > last_run_at)
+        )
+        if id_list:
+            new_q = new_q.filter(Creator.id.in_(id_list))
+        new_comments = new_q.scalar() or 0
+
+    return {
+        "last_run_at": last_run_at.isoformat() if last_run_at else None,
+        "new_comments_since_last_run": new_comments if last_run_at else total_comments,
+        "total_comments": total_comments,
+        "is_first_run": last_run_at is None,
+    }
+
+
+@router.post("/competitor-insights")
+async def run_competitor_insights(
+    creator_ids: Optional[str] = Query(None),
+    incremental: bool = Query(True),
+    db: Session = Depends(get_db),
+):
+    from ..config import settings as app_settings
+    id_list = [int(x) for x in creator_ids.split(",") if x.strip()] if creator_ids else None
+
+    # Determine cutoff for incremental
+    last_run_str = _get_setting(db, "competitor_insights_last_run")
+    last_run_at = datetime.fromisoformat(last_run_str) if last_run_str else None
+    cutoff = last_run_at if (incremental and last_run_at) else None
+
+    # Query comments
+    q = (
+        db.query(Comment, Video.title.label("video_title"), Creator.channel_name.label("creator_name"))
+        .join(Video, Comment.video_id == Video.id)
+        .join(Creator, Video.creator_id == Creator.id)
+    )
+    if id_list:
+        q = q.filter(Creator.id.in_(id_list))
+    if cutoff:
+        q = q.filter(Comment.imported_at > cutoff)
+
+    rows = q.order_by(Comment.likes.desc()).limit(8000).all()
+    comments_analyzed = len(rows)
+
+    if comments_analyzed == 0:
+        return {
+            "insight": None,
+            "model_used": None,
+            "error": "No new comments to analyze since last run." if cutoff else "No comments found. Import creators first.",
+            "comments_analyzed": 0,
+            "incremental_since": cutoff.isoformat() if cutoff else None,
+            "last_run_at": last_run_str,
+        }
+
+    texts = [r.Comment.comment_text for r in rows]
+    questions = extract_questions(texts)
+    pain_points = detect_pain_points(texts)
+    opportunities = discover_content_opportunities(texts)
+
+    # Build compact summary for AI
+    def _fmt_list(items, key, freq_key="frequency", n=15):
+        return "\n".join(
+            f"  • {item[key]} ({item[freq_key]}× mentions)"
+            for item in sorted(items, key=lambda x: x[freq_key], reverse=True)[:n]
+        )
+
+    summary_lines = [
+        f"Comments analyzed: {comments_analyzed}",
+        f"Period: {'since ' + cutoff.strftime('%Y-%m-%d') if cutoff else 'all time'}",
+        "",
+        "TOP QUESTIONS FROM AUDIENCE:",
+        _fmt_list(questions, "question_text"),
+        "",
+        "PAIN POINTS:",
+        _fmt_list(pain_points, "topic"),
+        "",
+        "CONTENT TOPICS MENTIONED:",
+        _fmt_list(opportunities, "topic"),
+    ]
+    prompt_data = "\n".join(summary_lines)
+
+    prompt = f"""You are a YouTube content strategist. Analyze this audience intelligence data and provide actionable content recommendations.
+
+{prompt_data}
+
+Provide a structured analysis with these exact sections:
+
+## 🎯 TOP 5 PRIORITY TOPICS
+For each topic: name, why it matters (mention count + gap assessment), and 2 specific video title ideas.
+
+## 🔥 TRENDING NOW
+3-5 topics showing the highest recent demand based on the data.
+
+## 🚨 CONTENT GAPS
+Topics with high audience demand but likely underserved — these are your biggest opportunities.
+
+## ⚡ QUICK WIN VIDEO IDEAS
+5 specific, ready-to-film video titles based on the most common questions. Include the question pattern that inspired each.
+
+Keep it concise and actionable. Focus on what to create NEXT."""
+
+    video_summaries = summary_lines
+    insight, error = await ai_analyze_videos(video_summaries, "custom", prompt)
+
+    # Update last run timestamp
+    now_str = datetime.utcnow().isoformat()
+    _set_setting(db, "competitor_insights_last_run", now_str)
+
+    return {
+        "insight": insight,
+        "model_used": app_settings.AI_MODEL or app_settings.AI_PROVIDER,
+        "error": error,
+        "comments_analyzed": comments_analyzed,
+        "incremental_since": cutoff.isoformat() if cutoff else None,
+        "last_run_at": now_str,
+        "topics_found": len(questions) + len(pain_points) + len(opportunities),
+    }
 
 
 @router.post("/watchlists/{watchlist_id}/check")

@@ -461,6 +461,38 @@ export interface CompetitorInsight {
   error?: string
 }
 
+// ─── Content Strategy AI Insights ────────────────────────────────────────────
+
+export interface InsightStatus {
+  last_run_at: string | null
+  new_comments_since_last_run: number
+  total_comments: number
+  is_first_run: boolean
+}
+
+export interface ContentStrategyInsight {
+  insight: string | null
+  model_used: string | null
+  error?: string
+  comments_analyzed: number
+  incremental_since: string | null
+  last_run_at: string | null
+  topics_found?: number
+}
+
+export const getInsightStatus = (creatorIds?: number[]) => {
+  const q = creatorIds?.length ? `?creator_ids=${creatorIds.join(',')}` : ''
+  return fetchAPI<InsightStatus>(`/analytics/competitor-insights/status${q}`)
+}
+
+export const runContentStrategyInsights = (creatorIds?: number[], incremental = true) => {
+  const params = new URLSearchParams({ incremental: String(incremental) })
+  if (creatorIds?.length) params.set('creator_ids', creatorIds.join(','))
+  return fetchAPI<ContentStrategyInsight>(`/analytics/competitor-insights?${params}`, {
+    method: 'POST',
+  })
+}
+
 export const getCompetitorInsights = (
   videoIds: number[],
   promptType: 'summary' | 'titles' | 'topics' | 'custom',
