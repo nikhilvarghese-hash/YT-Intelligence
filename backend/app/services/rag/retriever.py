@@ -61,9 +61,26 @@ async def retrieve(
             like_filters = [RAGChunk.chunk_text.ilike(f"%{kw}%") for kw in kws[:6]]
             kw_chunks = _base_q().filter(or_(*like_filters)).limit(_KEYWORD_LIMIT).all()
 
-        # Phase 2: broad comment sample (semantic search finds relevant ones without keywords)
-        comment_q = _base_q().filter(RAGDocument.source_type == "comment")
-        comment_sample = comment_q.limit(_COMMENT_SAMPLE).all()
+        # Phase 2: high-engagement comments — ordered by engagement in metadata via subquery
+        # Use a raw approach: grab comments with any keyword match first, then top-engagement
+        comment_kw: list[RAGChunk] = []
+        if kws:
+            comment_like = [RAGChunk.chunk_text.ilike(f"%{kw}%") for kw in kws[:6]]
+            comment_kw = (
+                _base_q()
+                .filter(RAGDocument.source_type == "comment")
+                .filter(or_(*comment_like))
+                .limit(150)
+                .all()
+            )
+        # Always add a broader comment sample (no keyword filter) for semantic ranking
+        comment_sample = (
+            _base_q()
+            .filter(RAGDocument.source_type == "comment")
+            .limit(_COMMENT_SAMPLE)
+            .all()
+        )
+        comment_sample = comment_kw + comment_sample
 
         # Merge, deduplicate by id
         seen: set[int] = set()
@@ -146,4 +163,27 @@ async def retrieve(
         })
 
     scored.sort(key=lambda x: x["final_score"], reverse=True)
-    return scored[:top_k]
+
+    # Ensure comment chunks aren't completely crowded out by video chunks
+    result: list[dict] = []
+    video_count = 0
+    max_videos = max(top_k // 3, 10)  # at most 1/3 of results are videos
+    deferred_videos: list[dict] = []
+
+    for item in scored:
+        if item["metadata"].get("source_type") == "video":
+            if video_count < max_videos:
+                result.append(item)
+                video_count += 1
+            else:
+                deferred_videos.append(item)
+        else:
+            result.append(item)
+        if len(result) >= top_k:
+            break
+
+    # Fill remaining slots with deferred videos if we don't have enough
+    if len(result) < top_k:
+        result.extend(deferred_videos[: top_k - len(result)])
+
+    return result[:top_k]
