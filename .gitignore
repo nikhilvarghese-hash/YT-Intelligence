@@ -19,8 +19,17 @@ frontend/out/
 frontend/.env.local
 frontend/.env
 
+# Secrets / local config
+backend/.env
+
 # Misc
 .DS_Store
 *.log
+frontend/tsconfig.tsbuildinfo
+
+# Claude Code local settings (may contain API tokens)
+.claude/settings.local.json
+frontend/.claude/
+
 # Added by code-review-graph
 .code-review-graph/

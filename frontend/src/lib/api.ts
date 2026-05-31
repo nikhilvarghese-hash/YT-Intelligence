@@ -658,6 +658,40 @@ export const getTopicThemeDetail = (themeId: string, creatorIds?: number[], peri
   return fetchAPI<TopicTheme>(`/topic-intelligence/themes/${themeId}?${params}`)
 }
 
+// ─── Video Topics ─────────────────────────────────────────────────────────────
+
+export interface VideoTopicVideo {
+  id: string
+  title: string
+  views: number
+  likes: number
+  comments: number
+  duration: string | null
+  thumbnail_url: string | null
+  url: string | null
+  publish_date: string | null
+  is_short: boolean
+}
+
+export interface VideoTopic {
+  keyword: string
+  video_count: number
+  total_views: number
+  total_likes: number
+  total_comments: number
+  engagement_score: number
+  avg_views: number
+  avg_likes: number
+  top_videos: VideoTopicVideo[]
+}
+
+export const getVideoTopics = (creatorIds?: number[], format?: 'shorts' | 'long', limit = 50) => {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (creatorIds?.length) params.set('creator_ids', creatorIds.join(','))
+  if (format) params.set('format', format)
+  return fetchAPI<{ topics: VideoTopic[]; total_videos: number }>(`/video-topics/topics?${params}`)
+}
+
 // ─── Intent layer ─────────────────────────────────────────────────────────────
 
 export interface IntentResult {
