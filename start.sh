@@ -95,9 +95,18 @@ setup_frontend() {
     ok "Frontend node_modules already present"
   fi
 
+  # Detect LAN IP so the frontend API URL works from mobile devices too
+  local lan_ip
+  lan_ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "")
+  local api_host="${lan_ip:-localhost}"
+
   if [[ ! -f "frontend/.env.local" ]]; then
-    echo "NEXT_PUBLIC_API_URL=http://localhost:${BACKEND_PORT}" > frontend/.env.local
-    ok "Created frontend/.env.local"
+    echo "NEXT_PUBLIC_API_URL=http://${api_host}:${BACKEND_PORT}" > frontend/.env.local
+    ok "Created frontend/.env.local (API URL: http://${api_host}:${BACKEND_PORT})"
+  else
+    # Update the API URL to reflect current IP (it changes on network switches)
+    sed -i '' "s|^NEXT_PUBLIC_API_URL=.*|NEXT_PUBLIC_API_URL=http://${api_host}:${BACKEND_PORT}|" frontend/.env.local
+    ok "Updated frontend/.env.local API URL → http://${api_host}:${BACKEND_PORT}"
   fi
 }
 
@@ -150,13 +159,22 @@ start_services() {
     sleep 0.5
   done
 
+  # Detect LAN IP for mobile/remote access
+  LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "")
+
   echo ""
   echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo -e "${GREEN}${BOLD}  YouTube Intelligence is running!${NC}"
   echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo ""
-  echo -e "  ${BOLD}App${NC}      http://localhost:${FRONTEND_PORT}"
-  echo -e "  ${BOLD}API docs${NC} http://localhost:${BACKEND_PORT}/api/docs"
+  echo -e "  ${BOLD}Local${NC}    http://localhost:${FRONTEND_PORT}"
+  echo -e "  ${BOLD}API${NC}      http://localhost:${BACKEND_PORT}/api/docs"
+  if [[ -n "$LOCAL_IP" ]]; then
+    echo ""
+    echo -e "  ${BOLD}📱 On your phone (same WiFi):${NC}"
+    echo -e "  ${CYAN}  http://${LOCAL_IP}:${FRONTEND_PORT}${NC}"
+    echo -e "  ${CYAN}  API: http://${LOCAL_IP}:${BACKEND_PORT}${NC}"
+  fi
   echo ""
   echo -e "  Stop:   ${YELLOW}./start.sh stop${NC}"
   echo -e "  Logs:   ${YELLOW}./start.sh logs${NC}"
