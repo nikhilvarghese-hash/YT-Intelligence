@@ -22,3 +22,5 @@ frontend/.env
 # Misc
 .DS_Store
 *.log
+# Added by code-review-graph
+.code-review-graph/
