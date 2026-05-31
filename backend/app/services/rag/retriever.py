@@ -1,7 +1,12 @@
 """
-Hybrid retrieval: semantic (vector) + keyword pre-filter.
-Pre-filters candidates with SQL LIKE to avoid loading all 45k chunks into memory.
-Ranking: semantic_score * 0.6 + keyword_score * 0.3 + engagement * 0.1
+Hybrid retrieval: semantic (vector) + keyword.
+
+When embeddings exist, uses two-phase approach:
+  1. Pull keyword-matched candidates (up to 300)
+  2. Pull a broad sample of comment chunks (up to 200) for semantic ranking
+  3. Rank everything together by combined score
+
+When no embeddings: keyword pre-filter + TF-IDF similarity.
 """
 from __future__ import annotations
 
@@ -9,20 +14,24 @@ import json
 import re
 from typing import Any, Optional
 
-from sqlalchemy import or_, text
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ...models import RAGChunk, RAGDocument, RAGEmbedding
 from .embedder import cosine_similarity, embed_query, build_tfidf_index, tfidf_vector, _STOP
 
 _TOP_K = 40
-_PRE_FILTER_LIMIT = 500  # max candidates from SQL before ranking
+_KEYWORD_LIMIT = 300
+_COMMENT_SAMPLE = 200
 
 
-def _query_keywords(query: str) -> list[str]:
-    """Extract meaningful words from query for SQL pre-filtering."""
+def _keywords(query: str) -> list[str]:
     words = re.findall(r"[a-z]{3,}", query.lower())
     return [w for w in words if w not in _STOP]
+
+
+def _has_embeddings(db: Session) -> bool:
+    return db.query(RAGEmbedding.id).limit(1).scalar() is not None
 
 
 async def retrieve(
@@ -32,32 +41,50 @@ async def retrieve(
     source_types: Optional[list[str]] = None,
     top_k: int = _TOP_K,
 ) -> list[dict[str, Any]]:
-    """Return ranked chunk dicts."""
 
-    keywords = _query_keywords(query)
+    use_vectors = _has_embeddings(db)
 
-    # ── SQL pre-filter: get candidates matching any keyword ───────────────────
-    q = db.query(RAGChunk).join(RAGDocument, RAGChunk.document_id == RAGDocument.id)
-
-    if creator_ids:
-        q = q.filter(RAGDocument.creator_id.in_(creator_ids))
-    if source_types:
-        q = q.filter(RAGDocument.source_type.in_(source_types))
-
-    if keywords:
-        like_filters = [RAGChunk.chunk_text.ilike(f"%{kw}%") for kw in keywords[:6]]
-        q = q.filter(or_(*like_filters))
-
-    chunks = q.limit(_PRE_FILTER_LIMIT).all()
-
-    if not chunks:
-        # Fallback: no keyword match — grab a general sample
-        q2 = db.query(RAGChunk).join(RAGDocument, RAGChunk.document_id == RAGDocument.id)
+    def _base_q():
+        q = db.query(RAGChunk).join(RAGDocument, RAGChunk.document_id == RAGDocument.id)
         if creator_ids:
-            q2 = q2.filter(RAGDocument.creator_id.in_(creator_ids))
+            q = q.filter(RAGDocument.creator_id.in_(creator_ids))
         if source_types:
-            q2 = q2.filter(RAGDocument.source_type.in_(source_types))
-        chunks = q2.limit(200).all()
+            q = q.filter(RAGDocument.source_type.in_(source_types))
+        return q
+
+    kws = _keywords(query)
+
+    if use_vectors:
+        # Phase 1: keyword-matched candidates
+        kw_chunks: list[RAGChunk] = []
+        if kws:
+            like_filters = [RAGChunk.chunk_text.ilike(f"%{kw}%") for kw in kws[:6]]
+            kw_chunks = _base_q().filter(or_(*like_filters)).limit(_KEYWORD_LIMIT).all()
+
+        # Phase 2: broad comment sample (semantic search finds relevant ones without keywords)
+        comment_q = _base_q().filter(RAGDocument.source_type == "comment")
+        comment_sample = comment_q.limit(_COMMENT_SAMPLE).all()
+
+        # Merge, deduplicate by id
+        seen: set[int] = set()
+        chunks: list[RAGChunk] = []
+        for c in kw_chunks + comment_sample:
+            if c.id not in seen:
+                seen.add(c.id)
+                chunks.append(c)
+
+        if not chunks:
+            chunks = _base_q().limit(300).all()
+    else:
+        # No embeddings: keyword pre-filter only
+        if kws:
+            like_filters = [RAGChunk.chunk_text.ilike(f"%{kw}%") for kw in kws[:6]]
+            chunks = _base_q().filter(or_(*like_filters)).limit(400).all()
+        else:
+            chunks = _base_q().limit(300).all()
+
+        if not chunks:
+            chunks = _base_q().limit(200).all()
 
     if not chunks:
         return []
@@ -66,21 +93,18 @@ async def retrieve(
     chunk_metas = [c.metadata_json or {} for c in chunks]
 
     # ── Keyword scores ────────────────────────────────────────────────────────
-    query_words = set(keywords)
+    query_words = set(kws)
     keyword_scores = []
     for text_content in chunk_texts:
         text_words = set(re.findall(r"[a-z]{3,}", text_content.lower())) - _STOP
-        if not text_words:
-            keyword_scores.append(0.0)
-            continue
-        overlap = len(query_words & text_words) / max(len(query_words), 1)
+        overlap = len(query_words & text_words) / max(len(query_words), 1) if query_words else 0.0
         keyword_scores.append(overlap)
 
     # ── Semantic scores ───────────────────────────────────────────────────────
     semantic_scores = [0.0] * len(chunks)
     query_vec = await embed_query(query)
 
-    if query_vec:
+    if query_vec and use_vectors:
         chunk_id_to_idx = {c.id: i for i, c in enumerate(chunks)}
         emb_rows = db.query(RAGEmbedding).filter(
             RAGEmbedding.chunk_id.in_(list(chunk_id_to_idx.keys()))
@@ -93,7 +117,6 @@ async def retrieve(
             except Exception:
                 pass
     else:
-        # TF-IDF only on the pre-filtered subset (fast)
         vocab, idf = build_tfidf_index(chunk_texts)
         q_vec = tfidf_vector(query, vocab, idf)
         for i, text_content in enumerate(chunk_texts):
