@@ -5,12 +5,13 @@ import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Users, Search, BarChart3, Lightbulb,
   ShoppingCart, TrendingUp, GitCompare, BookOpen, Bell,
-  FolderOpen, Settings, Youtube, HelpCircle, Swords, Brain, Telescope,
+  FolderOpen, Settings, Youtube, HelpCircle, Swords, Brain, Telescope, Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const nav = [
   { label: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { label: 'Intent Search', href: '/intent', icon: Sparkles },
   { label: 'Creators', href: '/creators', icon: Users },
   { label: 'Competitors', href: '/competitors', icon: Swords },
   { label: 'Search', href: '/search', icon: Search },

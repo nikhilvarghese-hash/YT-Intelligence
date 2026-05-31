@@ -657,3 +657,21 @@ export const getTopicThemeDetail = (themeId: string, creatorIds?: number[], peri
   if (creatorIds?.length) params.set('creator_ids', creatorIds.join(','))
   return fetchAPI<TopicTheme>(`/topic-intelligence/themes/${themeId}?${params}`)
 }
+
+// ─── Intent layer ─────────────────────────────────────────────────────────────
+
+export interface IntentResult {
+  intent: string
+  intent_label: string
+  summary: string
+  period: number
+  topic: string | null
+  page_link: string
+  preview: Record<string, unknown>
+}
+
+export const queryIntent = (query: string, creatorIds?: number[]) =>
+  fetchAPI<IntentResult>('/intent/query', {
+    method: 'POST',
+    body: JSON.stringify({ query, creator_ids: creatorIds ?? [] }),
+  })
