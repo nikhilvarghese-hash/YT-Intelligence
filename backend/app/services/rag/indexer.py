@@ -184,4 +184,34 @@ async def run_incremental_index(db: Session, creator_ids: list[int] | None = Non
     )
     db.commit()
 
-    return {"indexed": added, "skipped": skipped, "chunks_embedded": embedded}
+    # ── Embed any previously unembedded chunks (e.g. provider added later) ───
+    unembedded_extra = 0
+    if embedded == 0:  # only run this pass if we didn't just embed new chunks
+        from sqlalchemy import text as sa_text
+        unembedded = (
+            db.query(RAGChunk)
+            .outerjoin(RAGEmbedding, RAGChunk.id == RAGEmbedding.chunk_id)
+            .filter(RAGEmbedding.id.is_(None))
+            .limit(50000)
+            .all()
+        )
+        if unembedded:
+            logger.info("Found %d unembedded chunks — embedding now…", len(unembedded))
+            try:
+                batch_texts = [c.chunk_text for c in unembedded]
+                vectors = await embed_texts(batch_texts)
+                if vectors:
+                    for chunk, vector in zip(unembedded, vectors):
+                        emb = RAGEmbedding(
+                            chunk_id=chunk.id,
+                            embedding=json.dumps(vector),
+                            embedding_model=EMBEDDING_MODEL,
+                        )
+                        db.add(emb)
+                    db.commit()
+                    unembedded_extra = len(vectors)
+                    logger.info("Embedded %d previously unembedded chunks", unembedded_extra)
+            except Exception as e:
+                logger.warning("Backfill embedding failed: %s", e)
+
+    return {"indexed": added, "skipped": skipped, "chunks_embedded": embedded + unembedded_extra}

@@ -20,16 +20,35 @@ EMBEDDING_DIM = 1536
 
 async def embed_texts(texts: list[str]) -> list[list[float]] | None:
     """Embed a batch of texts. Returns None if no provider is available."""
-    key = settings.OPENAI_API_KEY
-    if key:
-        return await _openai_embed(texts, key)
-    # No provider — caller falls back to keyword search only
+    if settings.OPENAI_API_KEY:
+        return await _openai_embed(texts, settings.OPENAI_API_KEY)
+    if settings.OPENROUTER_API_KEY:
+        return await _openrouter_embed(texts, settings.OPENROUTER_API_KEY)
     return None
 
 
 async def embed_query(text: str) -> list[float] | None:
     result = await embed_texts([text])
     return result[0] if result else None
+
+
+async def _openrouter_embed(texts: list[str], api_key: str) -> list[list[float]]:
+    import httpx
+    all_embeddings: list[list[float]] = []
+    batch_size = 100
+    async with httpx.AsyncClient(timeout=60) as client:
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            resp = await client.post(
+                f"{settings.OPENROUTER_BASE_URL}/embeddings",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={"model": EMBEDDING_MODEL, "input": batch},
+            )
+            resp.raise_for_status()
+            data = resp.json()["data"]
+            data.sort(key=lambda x: x["index"])
+            all_embeddings.extend(item["embedding"] for item in data)
+    return all_embeddings
 
 
 async def _openai_embed(texts: list[str], api_key: str) -> list[list[float]]:
