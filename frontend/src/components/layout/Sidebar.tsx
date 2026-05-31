@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Users, Search, BarChart3, Lightbulb,
   ShoppingCart, TrendingUp, GitCompare, BookOpen, Bell,
-  FolderOpen, Settings, Youtube, HelpCircle, Swords, Brain, Telescope, Sparkles,
+  FolderOpen, Settings, Youtube, HelpCircle, Swords, Brain, Telescope, Sparkles, CalendarDays,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -27,6 +27,7 @@ const nav = [
   { section: 'AI Content Strategy' },
   { label: 'AI Content Strategy', href: '/ai-content-strategy', icon: Brain },
   { label: 'Topic Intelligence',  href: '/topic-intelligence',  icon: Telescope },
+  { label: 'Content Planner',     href: '/content-planner',     icon: CalendarDays },
   { divider: true },
   { label: 'Collections', href: '/collections', icon: FolderOpen },
   { label: 'Watchlists', href: '/watchlists', icon: Bell },

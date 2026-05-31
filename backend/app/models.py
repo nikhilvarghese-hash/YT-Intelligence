@@ -197,3 +197,36 @@ class ContentRecommendation(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ContentBrief(Base):
+    __tablename__ = "content_briefs"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Source linkage (nullable — briefs can be created standalone)
+    recommendation_id = Column(Integer, ForeignKey("content_recommendations.id", ondelete="SET NULL"), nullable=True, index=True)
+    topic = Column(String(512), nullable=False)
+    title = Column(String(512))
+    category = Column(String(128))
+    classification = Column(String(32))   # finniki | adjacent
+
+    # AI-generated components
+    brief_summary = Column(Text)
+    target_audience = Column(String(256))
+    hook = Column(Text)
+    video_outline = Column(JSON)          # [{section, duration_min, points:[]}]
+    thumbnail_ideas = Column(JSON)        # [{concept, description, style}]
+    seo_primary_keyword = Column(String(256))
+    seo_secondary_keywords = Column(JSON) # [str]
+    seo_tags = Column(JSON)               # [str]
+    estimated_duration = Column(Integer)  # minutes
+    content_format = Column(String(32))   # long | short | series
+
+    # Workflow
+    status = Column(String(32), default='draft')  # draft | ready | scheduled | published
+    scheduled_date = Column(DateTime, nullable=True)
+    notes = Column(Text)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

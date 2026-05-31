@@ -770,3 +770,104 @@ export const updateRecommendation = (id: number, patch: Partial<Pick<Recommendat
 
 export const deleteRecommendation = (id: number) =>
   fetchAPI(`/recommendations/${id}`, { method: 'DELETE' })
+
+// ── Content Planner ───────────────────────────────────────────────────────────
+
+export type BriefStatus = 'draft' | 'ready' | 'scheduled' | 'published'
+
+export interface VideoOutlineSection {
+  section: string
+  duration_min: number
+  points: string[]
+}
+
+export interface ThumbnailIdea {
+  concept: string
+  description: string
+  style: 'fear' | 'curiosity' | 'value' | 'authority'
+}
+
+export interface ContentBrief {
+  id: number
+  recommendation_id: number | null
+  topic: string
+  title: string | null
+  category: string | null
+  classification: 'finniki' | 'adjacent' | null
+  brief_summary: string | null
+  target_audience: string | null
+  hook: string | null
+  video_outline: VideoOutlineSection[]
+  thumbnail_ideas: ThumbnailIdea[]
+  seo_primary_keyword: string | null
+  seo_secondary_keywords: string[]
+  seo_tags: string[]
+  estimated_duration: number | null
+  content_format: 'long' | 'short' | 'series' | null
+  status: BriefStatus
+  scheduled_date: string | null
+  notes: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface BriefPage {
+  items: ContentBrief[]
+  total: number
+  page: number
+  has_more: boolean
+}
+
+export const generateBrief = (body: {
+  recommendation_id?: number
+  topic?: string
+  title?: string
+  category?: string
+  classification?: string
+  target_audience?: string
+  talking_points?: string[]
+  hook?: string
+  format?: string
+  priority_score?: number
+}) =>
+  fetchAPI<ContentBrief>('/content-planner/briefs/generate', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+export const listBriefs = (params?: {
+  status?: BriefStatus
+  classification?: string
+  format?: string
+  page?: number
+  pageSize?: number
+}) => {
+  const p = new URLSearchParams({
+    page: String(params?.page ?? 1),
+    page_size: String(params?.pageSize ?? 50),
+  })
+  if (params?.status) p.set('status', params.status)
+  if (params?.classification) p.set('classification', params.classification)
+  if (params?.format) p.set('format', params.format)
+  return fetchAPI<BriefPage>(`/content-planner/briefs?${p}`)
+}
+
+export const getBrief = (id: number) =>
+  fetchAPI<ContentBrief>(`/content-planner/briefs/${id}`)
+
+export const updateBrief = (
+  id: number,
+  patch: Partial<Pick<ContentBrief,
+    'status' | 'notes' | 'title' | 'hook' | 'brief_summary' |
+    'video_outline' | 'thumbnail_ideas' | 'seo_primary_keyword' |
+    'seo_secondary_keywords' | 'seo_tags' | 'estimated_duration' |
+    'content_format' | 'target_audience' | 'scheduled_date'
+  >>
+) =>
+  fetchAPI(`/content-planner/briefs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
+
+export const deleteBrief = (id: number) =>
+  fetchAPI(`/content-planner/briefs/${id}`, { method: 'DELETE' })
+
+export const getCalendar = (year: number, month: number) =>
+  fetchAPI<{ items: ContentBrief[] }>(`/content-planner/calendar?year=${year}&month=${month}`)
