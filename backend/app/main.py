@@ -5,7 +5,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from .config import settings
 from .database import engine, Base
 from .routers import creators, search, analytics, export, settings as settings_router
-from .routers import competitors
+from .routers import competitors, content_strategy, topic_intelligence
 
 # Create all tables
 Base.metadata.create_all(bind=engine)
@@ -44,6 +44,28 @@ app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"]
 app.include_router(export.router, prefix="/api/export", tags=["Export"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["Settings"])
 app.include_router(competitors.router, prefix="/api/competitors", tags=["Competitors"])
+app.include_router(content_strategy.router, prefix="/api/content-strategy", tags=["Content Strategy"])
+app.include_router(topic_intelligence.router, prefix="/api/topic-intelligence", tags=["Topic Intelligence"])
+
+
+@app.on_event("startup")
+async def load_settings_on_startup():
+    """Load persisted API keys and settings from DB into runtime config."""
+    from .database import SessionLocal
+    from .models import AppSettings as AppSettingsModel
+    db = SessionLocal()
+    try:
+        keys_to_load = [
+            "youtube_api_key", "ai_provider", "ai_model",
+            "openai_api_key", "anthropic_api_key", "gemini_api_key",
+            "ollama_base_url", "openrouter_api_key",
+        ]
+        for key in keys_to_load:
+            row = db.query(AppSettingsModel).filter(AppSettingsModel.key == key).first()
+            if row and row.value:
+                setattr(settings, key.upper(), row.value)
+    finally:
+        db.close()
 
 
 @app.get("/api/health")

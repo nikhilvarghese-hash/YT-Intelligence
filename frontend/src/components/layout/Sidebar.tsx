@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Users, Search, BarChart3, Lightbulb,
   ShoppingCart, TrendingUp, GitCompare, BookOpen, Bell,
-  FolderOpen, Settings, Youtube, HelpCircle, Swords,
+  FolderOpen, Settings, Youtube, HelpCircle, Swords, Brain, Telescope,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -22,6 +22,10 @@ const nav = [
   { label: 'Audience Overlap', href: '/analytics/audience-overlap', icon: GitCompare },
   { label: 'Compare Creators', href: '/analytics/compare', icon: BarChart3 },
   { label: 'Competitor Analytics', href: '/competitor-analytics', icon: Swords },
+  { divider: true },
+  { section: 'AI Content Strategy' },
+  { label: 'AI Content Strategy', href: '/ai-content-strategy', icon: Brain },
+  { label: 'Topic Intelligence',  href: '/topic-intelligence',  icon: Telescope },
   { divider: true },
   { label: 'Collections', href: '/collections', icon: FolderOpen },
   { label: 'Watchlists', href: '/watchlists', icon: Bell },
@@ -48,6 +52,13 @@ export function Sidebar() {
         {nav.map((item, i) => {
           if ('divider' in item) {
             return <div key={i} className="my-1 border-t border-border" />
+          }
+          if ('section' in item) {
+            return (
+              <p key={i} className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+                {item.section}
+              </p>
+            )
           }
           const Icon = item.icon
           const active = path === item.href || (item.href !== '/' && path.startsWith(item.href))

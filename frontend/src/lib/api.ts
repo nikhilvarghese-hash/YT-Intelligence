@@ -509,6 +509,94 @@ export const runContentStrategyInsights = (creatorIds?: number[], incremental = 
   })
 }
 
+// ─── AI Content Strategy ─────────────────────────────────────────────────────
+
+export type KanbanStatus = 'new' | 'trending' | 'high_engagement' | 'planned' | 'in_progress' | 'published' | 'archived'
+
+export interface ContentCard {
+  id: string
+  topic: string
+  original_topic: string
+  type: 'question' | 'opportunity' | 'pain_point'
+  category: string
+  classification: 'finniki' | 'adjacent'
+  frequency: number
+  unique_users: number
+  avg_likes: number
+  scores: { demand: number; engagement: number; relevance: number; opportunity: number }
+  format: 'long' | 'short' | 'both'
+  format_confidence: number
+  trend: 'growing' | 'stable' | 'declining'
+  status: KanbanStatus
+  example_comments: string[]
+  creator_names: string[]
+  notes: string
+  custom_title: string
+}
+
+export interface ContentCardPage {
+  items: ContentCard[]
+  total: number
+  page: number
+  has_more: boolean
+}
+
+export interface CardBrief {
+  brief: string | null
+  error?: string
+}
+
+export interface StrategyVideo {
+  id: number
+  video_id: string
+  title: string
+}
+
+export const getStrategyVideos = (creatorIds?: number[]) => {
+  const params = new URLSearchParams()
+  if (creatorIds?.length) params.set('creator_ids', creatorIds.join(','))
+  return fetchAPI<StrategyVideo[]>(`/content-strategy/videos?${params}`)
+}
+
+export const getContentOpportunityCards = (params: {
+  creatorIds?: number[]
+  period?: number
+  videoId?: number
+  minScore?: number
+  page?: number
+  pageSize?: number
+}) => {
+  const p = new URLSearchParams({ period: String(params.period ?? 90), page: String(params.page ?? 1), page_size: String(params.pageSize ?? 50) })
+  if (params.creatorIds?.length) p.set('creator_ids', params.creatorIds.join(','))
+  if (params.videoId) p.set('video_id', String(params.videoId))
+  if (params.minScore) p.set('min_score', String(params.minScore))
+  return fetchAPI<ContentCardPage>(`/content-strategy/opportunities?${p}`)
+}
+
+export const updateCardStatuses = (updates: Record<string, KanbanStatus>) =>
+  fetchAPI('/content-strategy/cards/status', {
+    method: 'POST',
+    body: JSON.stringify(updates),
+  })
+
+export const updateCardMeta = (cardId: string, meta: { notes?: string; custom_title?: string; archived?: boolean }) =>
+  fetchAPI(`/content-strategy/cards/${cardId}/meta`, {
+    method: 'PATCH',
+    body: JSON.stringify(meta),
+  })
+
+export const generateCardBrief = (card: Pick<ContentCard, 'topic' | 'frequency' | 'example_comments' | 'classification' | 'category'>) =>
+  fetchAPI<CardBrief>('/content-strategy/cards/brief', {
+    method: 'POST',
+    body: JSON.stringify(card),
+  })
+
+export const getContentTrends = (topics: string[], creatorIds?: number[], weeks = 12) => {
+  const params = new URLSearchParams({ topics: topics.join(','), weeks: String(weeks) })
+  if (creatorIds?.length) params.set('creator_ids', creatorIds.join(','))
+  return fetchAPI<Record<string, Array<{ week: string; count: number }>>>(`/content-strategy/trends?${params}`)
+}
+
 export const getCompetitorInsights = (
   videoIds: number[],
   promptType: 'summary' | 'titles' | 'topics' | 'custom',
@@ -522,3 +610,50 @@ export const getCompetitorInsights = (
       custom_prompt: customPrompt,
     }),
   })
+
+// ─── Topic Intelligence ───────────────────────────────────────────────────────
+
+export interface TopicTheme {
+  id: string
+  name: string
+  total_mentions: number
+  unique_users: number
+  growth_rate: number
+  trend: 'growing' | 'stable' | 'declining'
+  finniki: boolean
+  finniki_confidence: number
+  top_keywords: string[]
+  representative_questions: string[]
+  all_questions: string[]
+  related_videos: { title: string; count: number }[]
+  summary: string
+}
+
+export interface TopicThemesResponse {
+  themes: TopicTheme[]
+  status: 'cached' | 'building' | 'ready'
+  building: boolean
+  error: string
+}
+
+export const getTopicThemes = (creatorIds?: number[], period = 90, forceRebuild = false) => {
+  const params = new URLSearchParams({ period: String(period) })
+  if (creatorIds?.length) params.set('creator_ids', creatorIds.join(','))
+  if (forceRebuild) params.set('force_rebuild', 'true')
+  return fetchAPI<TopicThemesResponse>(`/topic-intelligence/themes?${params}`)
+}
+
+export const rebuildTopicThemes = (creatorIds?: number[], period = 90) => {
+  const params = new URLSearchParams({ period: String(period) })
+  if (creatorIds?.length) params.set('creator_ids', creatorIds.join(','))
+  return fetchAPI(`/topic-intelligence/rebuild?${params}`, { method: 'POST' })
+}
+
+export const getTopicThemeStatus = () =>
+  fetchAPI<{ building: boolean; error: string; started_at: string | null }>('/topic-intelligence/status')
+
+export const getTopicThemeDetail = (themeId: string, creatorIds?: number[], period = 90) => {
+  const params = new URLSearchParams({ period: String(period) })
+  if (creatorIds?.length) params.set('creator_ids', creatorIds.join(','))
+  return fetchAPI<TopicTheme>(`/topic-intelligence/themes/${themeId}?${params}`)
+}
