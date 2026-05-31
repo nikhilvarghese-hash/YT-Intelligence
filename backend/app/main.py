@@ -5,7 +5,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from .config import settings
 from .database import engine, Base
 from .routers import creators, search, analytics, export, settings as settings_router
-from .routers import competitors, content_strategy, topic_intelligence, intent
+from .routers import competitors, content_strategy, topic_intelligence, intent, recommendations
 
 # Create all tables
 Base.metadata.create_all(bind=engine)
@@ -47,6 +47,7 @@ app.include_router(competitors.router, prefix="/api/competitors", tags=["Competi
 app.include_router(content_strategy.router, prefix="/api/content-strategy", tags=["Content Strategy"])
 app.include_router(topic_intelligence.router, prefix="/api/topic-intelligence", tags=["Topic Intelligence"])
 app.include_router(intent.router, prefix="/api/intent", tags=["Intent"])
+app.include_router(recommendations.router, prefix="/api/recommendations", tags=["Recommendations"])
 
 
 @app.on_event("startup")

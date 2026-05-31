@@ -5,12 +5,15 @@ import {
   Brain, Loader2, TrendingUp, TrendingDown, Minus, X,
   Sparkles, LayoutGrid, Tags, BarChart2, Bot, Calendar,
   Archive, Pencil, Check, StickyNote, Users, Video,
-  SlidersHorizontal,
+  SlidersHorizontal, Zap, BookOpen, HelpCircle, AlertTriangle,
+  ChevronDown, ChevronRight, Star, FileText, CheckCircle2, Clock,
 } from 'lucide-react'
 import {
   getContentOpportunityCards, updateCardStatuses, updateCardMeta,
   generateCardBrief, getContentTrends, listCreators, getStrategyVideos,
+  listRecommendations, generateRecommendation, updateRecommendation, deleteRecommendation,
   type ContentCard, type KanbanStatus, type Creator, type StrategyVideo,
+  type Recommendation, type RecommendationStatus, type RecommendationFormat,
 } from '@/lib/api'
 import { CreatorFilter } from '@/components/analytics/CreatorFilter'
 import {
@@ -228,75 +231,478 @@ function ClustersTab({ filtered, onCardClick }: { filtered: ContentCard[]; onCar
 
 // ── Content Recommendations tab (infinite scroll) ─────────────────────────────
 
-function RecommendationsTab({ filtered, onCardClick }: { filtered: ContentCard[]; onCardClick: (c: ContentCard) => void }) {
-  const [page, setPage] = useState(1)
-  const PAGE_SIZE = 18
+// ── Score colours ─────────────────────────────────────────────────────────────
+
+const PRIORITY_COLOR = (s: number) =>
+  s >= 75 ? 'text-emerald-400' : s >= 50 ? 'text-amber-400' : s >= 30 ? 'text-blue-400' : 'text-muted-foreground'
+
+const STATUS_STYLES: Record<RecommendationStatus, string> = {
+  draft:     'bg-secondary text-muted-foreground',
+  reviewed:  'bg-blue-400/15 text-blue-400',
+  approved:  'bg-violet-400/15 text-violet-400',
+  published: 'bg-emerald-400/15 text-emerald-400',
+}
+const STATUS_ICONS: Record<RecommendationStatus, typeof Clock> = {
+  draft: Clock, reviewed: FileText, approved: CheckCircle2, published: Star,
+}
+const FORMAT_ICON: Record<RecommendationFormat, string> = {
+  long: '📄 Long-form', short: '⚡ Short-form', series: '📚 Series',
+}
+
+// ── Recommendation detail panel ───────────────────────────────────────────────
+
+function RecommendationDetail({
+  rec,
+  onClose,
+  onStatusChange,
+  onDelete,
+}: {
+  rec: Recommendation
+  onClose: () => void
+  onStatusChange: (id: number, status: RecommendationStatus) => void
+  onDelete: (id: number) => void
+}) {
+  const [openSection, setOpenSection] = useState<string | null>('talking_points')
+  const [status, setStatus] = useState<RecommendationStatus>(rec.status as RecommendationStatus)
+  const [saving, setSaving] = useState(false)
+
+  async function changeStatus(s: RecommendationStatus) {
+    setSaving(true)
+    await updateRecommendation(rec.id, { status: s }).catch(console.error)
+    setStatus(s)
+    onStatusChange(rec.id, s)
+    setSaving(false)
+  }
+
+  async function handleDelete() {
+    await deleteRecommendation(rec.id).catch(console.error)
+    onDelete(rec.id)
+    onClose()
+  }
+
+  const ScoreChip = ({ label, value, color }: { label: string; value: number; color: string }) => (
+    <div className="text-center">
+      <div className={`text-lg font-black ${color}`}>{value}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
+    </div>
+  )
+
+  const Section = ({ id, icon: Icon, title, children }: {
+    id: string; icon: typeof BookOpen; title: string; children: React.ReactNode
+  }) => {
+    const open = openSection === id
+    return (
+      <div className="border-b border-border">
+        <button onClick={() => setOpenSection(open ? null : id)}
+          className="w-full flex items-center gap-2 px-5 py-3 hover:bg-secondary/10 transition-colors text-left">
+          <Icon className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+          <span className="text-xs font-semibold flex-1">{title}</span>
+          {open ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+        </button>
+        {open && <div className="px-5 pb-4">{children}</div>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="absolute inset-y-0 right-0 w-[500px] bg-card border-l border-border flex flex-col shadow-2xl z-20">
+      {/* Header */}
+      <div className="px-5 py-4 border-b border-border flex-shrink-0">
+        <div className="flex items-start gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+              <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${rec.classification === 'finniki' ? 'bg-amber-400/15 text-amber-400' : 'bg-secondary text-muted-foreground'}`}>
+                {rec.classification === 'finniki' ? 'Finniki' : 'Adjacent'}
+              </span>
+              <span className="text-xs text-muted-foreground">{rec.category}</span>
+              <span className="text-xs text-muted-foreground">{FORMAT_ICON[rec.format as RecommendationFormat] || rec.format}</span>
+            </div>
+            <p className="text-sm font-bold leading-snug">{rec.suggested_title || rec.topic}</p>
+            {rec.target_audience && (
+              <p className="text-xs text-muted-foreground mt-1">→ {rec.target_audience}</p>
+            )}
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground flex-shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {/* Score grid */}
+        <div className="px-5 py-4 border-b border-border">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Opportunity Scores</p>
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            <ScoreChip label="Demand"     value={rec.scores.demand}     color="text-amber-400" />
+            <ScoreChip label="Engagement" value={rec.scores.engagement} color="text-blue-400" />
+            <ScoreChip label="Trend"      value={rec.scores.trend}      color={rec.trend === 'growing' ? 'text-emerald-400' : rec.trend === 'declining' ? 'text-red-400' : 'text-muted-foreground'} />
+          </div>
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <ScoreChip label="Relevance"  value={rec.scores.relevance}  color="text-violet-400" />
+            <ScoreChip label="Priority"   value={rec.scores.priority}   color={PRIORITY_COLOR(rec.scores.priority)} />
+            <div className="text-center">
+              <div className="text-lg font-black text-foreground">{Math.round(rec.scores.confidence * 100)}%</div>
+              <div className="text-xs text-muted-foreground">Confidence</div>
+            </div>
+          </div>
+          {/* Score bars */}
+          <div className="space-y-2">
+            {[
+              { label: 'Demand',     v: rec.scores.demand,     color: 'text-amber-400' },
+              { label: 'Engagement', v: rec.scores.engagement, color: 'text-blue-400' },
+              { label: 'Trend',      v: rec.scores.trend,      color: 'text-emerald-400' },
+              { label: 'Relevance',  v: rec.scores.relevance,  color: 'text-violet-400' },
+              { label: 'Priority',   v: rec.scores.priority,   color: PRIORITY_COLOR(rec.scores.priority) },
+            ].map(({ label, v, color }) => (
+              <ScoreBar key={label} label={label} value={v} color={color} />
+            ))}
+          </div>
+          {rec.explanation && (
+            <p className="text-xs text-muted-foreground mt-3 leading-relaxed italic">{rec.explanation}</p>
+          )}
+        </div>
+
+        {/* Raw metrics */}
+        <div className="px-5 py-3 border-b border-border">
+          <div className="grid grid-cols-4 gap-2 text-center text-xs">
+            <div><p className="font-black text-amber-400">{rec.frequency}</p><p className="text-muted-foreground">mentions</p></div>
+            <div><p className="font-black">{rec.unique_users}</p><p className="text-muted-foreground">users</p></div>
+            <div><p className="font-black">{rec.avg_likes.toFixed(0)}</p><p className="text-muted-foreground">avg likes</p></div>
+            <div>
+              <p className={`font-black ${rec.growth_rate > 0 ? 'text-emerald-400' : rec.growth_rate < 0 ? 'text-red-400' : 'text-muted-foreground'}`}>
+                {rec.growth_rate > 0 ? '+' : ''}{Math.round(rec.growth_rate * 100)}%
+              </p>
+              <p className="text-muted-foreground">growth</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Hook */}
+        {rec.suggested_hook && (
+          <div className="px-5 py-4 border-b border-border">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Zap className="w-3.5 h-3.5 text-amber-400" />
+              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Opening Hook</p>
+            </div>
+            <p className="text-xs leading-relaxed text-foreground/80 bg-amber-400/5 border border-amber-400/20 rounded-lg p-3">{rec.suggested_hook}</p>
+          </div>
+        )}
+
+        {/* Talking points */}
+        {rec.talking_points?.length > 0 && (
+          <Section id="talking_points" icon={BookOpen} title={`Talking Points (${rec.talking_points.length})`}>
+            <div className="space-y-1.5">
+              {rec.talking_points.map((p, i) => (
+                <div key={i} className="flex items-start gap-2 text-xs">
+                  <span className="text-primary font-bold mt-0.5 flex-shrink-0">{i + 1}.</span>
+                  <span className="text-foreground/80">{p}</span>
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {/* FAQs */}
+        {rec.faqs?.length > 0 && (
+          <Section id="faqs" icon={HelpCircle} title={`FAQs (${rec.faqs.length})`}>
+            <div className="space-y-3">
+              {rec.faqs.map((faq, i) => (
+                <div key={i}>
+                  <p className="text-xs font-semibold text-foreground mb-0.5">Q: {faq.q}</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">A: {faq.a}</p>
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {/* Misconceptions */}
+        {rec.misconceptions?.length > 0 && (
+          <Section id="misconceptions" icon={AlertTriangle} title={`Common Misconceptions (${rec.misconceptions.length})`}>
+            <div className="space-y-1.5">
+              {rec.misconceptions.map((m, i) => (
+                <div key={i} className="flex items-start gap-2 text-xs">
+                  <span className="text-red-400 mt-0.5 flex-shrink-0">✗</span>
+                  <span className="text-foreground/80">{m}</span>
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {/* Status workflow */}
+        <div className="px-5 py-4 border-b border-border">
+          <p className="text-xs font-semibold text-muted-foreground mb-2">Workflow Status</p>
+          <div className="flex gap-1.5 flex-wrap">
+            {(['draft', 'reviewed', 'approved', 'published'] as RecommendationStatus[]).map(s => {
+              const Icon = STATUS_ICONS[s]
+              return (
+                <button key={s} onClick={() => changeStatus(s)} disabled={saving}
+                  className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                    status === s ? STATUS_STYLES[s] + ' border-current' : 'border-border text-muted-foreground hover:border-primary/50'
+                  }`}>
+                  <Icon className="w-3 h-3" />
+                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Delete */}
+        <div className="px-5 py-3">
+          <button onClick={handleDelete} className="text-xs text-muted-foreground hover:text-red-400 transition-colors">
+            Delete recommendation
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Recommendations tab ───────────────────────────────────────────────────────
+
+function RecommendationsTab({ filtered }: { filtered: ContentCard[] }) {
+  const [recs, setRecs] = useState<Recommendation[]>([])
+  const [totalRecs, setTotalRecs] = useState(0)
+  const [loadingRecs, setLoadingRecs] = useState(false)
+  const [generating, setGenerating] = useState<Set<string>>(new Set())
+  const [selectedRec, setSelectedRec] = useState<Recommendation | null>(null)
+  const [filterStatus, setFilterStatus] = useState<string>('all')
+  const [filterClass, setFilterClass] = useState<string>('all')
+  const [minPriority, setMinPriority] = useState(0)
+  const [recPage, setRecPage] = useState(1)
   const sentinelRef = useRef<HTMLDivElement>(null)
 
-  const top = useMemo(() =>
-    [...filtered].filter(c => c.status !== 'archived').sort((a, b) => b.scores.opportunity - a.scores.opportunity),
+  // Candidates: top 30 opportunity cards not yet in recs
+  const topCards = useMemo(() =>
+    [...filtered]
+      .filter(c => c.status !== 'archived')
+      .sort((a, b) => b.scores.opportunity - a.scores.opportunity)
+      .slice(0, 30),
     [filtered]
   )
-  const shown = top.slice(0, page * PAGE_SIZE)
-  const hasMore = shown.length < top.length
 
-  useEffect(() => { setPage(1) }, [filtered])
+  const recTopicSet = useMemo(() => new Set(recs.map(r => r.topic)), [recs])
 
+  function loadRecs(page = 1, append = false) {
+    setLoadingRecs(true)
+    listRecommendations({
+      status: filterStatus !== 'all' ? filterStatus as RecommendationStatus : undefined,
+      classification: filterClass !== 'all' ? filterClass : undefined,
+      minPriority: minPriority > 0 ? minPriority : undefined,
+      page,
+      pageSize: 24,
+    }).then(res => {
+      setRecs(prev => append ? [...prev, ...res.items] : res.items)
+      setTotalRecs(res.total)
+      setRecPage(page)
+    }).catch(console.error).finally(() => setLoadingRecs(false))
+  }
+
+  useEffect(() => { loadRecs(1) }, [filterStatus, filterClass, minPriority])
+
+  // Infinite scroll
   useEffect(() => {
     const el = sentinelRef.current
-    if (!el || !hasMore) return
+    if (!el || recs.length >= totalRecs) return
     const obs = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting) setPage(p => p + 1)
+      if (entries[0].isIntersecting) loadRecs(recPage + 1, true)
     }, { threshold: 0.1 })
     obs.observe(el)
     return () => obs.disconnect()
-  }, [hasMore])
+  }, [recs.length, totalRecs, recPage])
+
+  async function handleGenerate(card: ContentCard) {
+    setGenerating(prev => new Set([...prev, card.id]))
+    try {
+      const rec = await generateRecommendation({
+        topic: card.topic,
+        original_topic: card.original_topic || card.topic,
+        category: card.category,
+        classification: card.classification,
+        frequency: card.frequency,
+        unique_users: card.unique_users,
+        avg_likes: card.avg_likes,
+        growth_rate: 0,
+        trend: card.trend,
+        example_comments: card.example_comments,
+        finniki_confidence: card.classification === 'finniki' ? 0.8 : 0.1,
+      })
+      setRecs(prev => {
+        const exists = prev.findIndex(r => r.id === rec.id)
+        return exists >= 0 ? prev.map(r => r.id === rec.id ? rec : r) : [rec, ...prev]
+      })
+      setSelectedRec(rec)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setGenerating(prev => { const s = new Set(prev); s.delete(card.id); return s })
+    }
+  }
+
+  function handleStatusChange(id: number, status: RecommendationStatus) {
+    setRecs(prev => prev.map(r => r.id === id ? { ...r, status } : r))
+  }
+
+  function handleDelete(id: number) {
+    setRecs(prev => prev.filter(r => r.id !== id))
+  }
+
+  const SCORE_DOT = (v: number) =>
+    v >= 75 ? 'bg-emerald-400' : v >= 50 ? 'bg-amber-400' : v >= 30 ? 'bg-blue-400' : 'bg-muted'
 
   return (
-    <div className="h-full overflow-y-auto p-5">
-      <div className="mb-4">
-        <h2 className="text-sm font-bold mb-1">Top Content Recommendations</h2>
-        <p className="text-xs text-muted-foreground">Highest-opportunity topics sorted by priority score. Click any card to open the detail panel.</p>
+    <div className="h-full overflow-hidden flex flex-col relative">
+      {/* Sub-controls */}
+      <div className="px-5 py-2.5 border-b border-border flex-shrink-0 flex items-center gap-3 flex-wrap">
+        <span className="text-xs text-muted-foreground font-semibold">{totalRecs} saved</span>
+        {/* Status filter */}
+        {(['all', 'draft', 'reviewed', 'approved', 'published'] as const).map(s => (
+          <button key={s} onClick={() => setFilterStatus(s)}
+            className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${filterStatus === s ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:border-primary/50'}`}>
+            {s.charAt(0).toUpperCase() + s.slice(1)}
+          </button>
+        ))}
+        <span className="text-border">|</span>
+        {(['all', 'finniki', 'adjacent'] as const).map(v => (
+          <button key={v} onClick={() => setFilterClass(v)}
+            className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${filterClass === v ? 'border-amber-400 bg-amber-400/10 text-amber-400' : 'border-border text-muted-foreground hover:border-amber-400/50'}`}>
+            {v === 'all' ? 'All' : v === 'finniki' ? 'Finniki' : 'Adjacent'}
+          </button>
+        ))}
+        <div className="flex items-center gap-1.5 ml-auto">
+          <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground">Min priority</span>
+          <input type="number" min={0} max={100} step={5} value={minPriority}
+            onChange={e => setMinPriority(Number(e.target.value))}
+            className="w-12 px-2 py-1 text-xs bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
+        </div>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {shown.map((card, idx) => (
-          <div key={card.id} className="bg-card border border-border rounded-xl p-4 hover:border-primary/30 transition-colors cursor-pointer"
-            onClick={() => onCardClick(card)}>
-            <div className="flex items-start justify-between gap-2 mb-3">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <span className="text-xs text-muted-foreground font-mono">#{idx + 1}</span>
-                  <ClassBadge c={card} />
-                </div>
-                <p className="text-sm font-semibold line-clamp-2">{card.topic}</p>
-              </div>
-              <div className={`text-2xl font-black ${SCORE_COLOR(card.scores.opportunity)}`}>{card.scores.opportunity}</div>
+
+      <div className="flex-1 overflow-y-auto p-5">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {/* Left: Opportunity candidates */}
+          <div>
+            <h2 className="text-sm font-bold mb-1">Generate from Opportunities</h2>
+            <p className="text-xs text-muted-foreground mb-3">Click Generate to produce a full AI recommendation for a topic.</p>
+            <div className="space-y-2">
+              {topCards.map((card, idx) => {
+                const isGen = generating.has(card.id)
+                const isDone = recTopicSet.has(card.topic)
+                return (
+                  <div key={card.id} className="flex items-center gap-3 bg-card border border-border rounded-lg px-3 py-2.5 hover:border-primary/20 transition-colors">
+                    <span className="text-xs text-muted-foreground font-mono w-5 flex-shrink-0">#{idx + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold line-clamp-1">{card.topic}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className={`text-xs px-1 py-0.5 rounded font-bold ${card.classification === 'finniki' ? 'bg-amber-400/15 text-amber-400' : 'bg-secondary text-muted-foreground'}`}>
+                          {card.classification === 'finniki' ? 'FN' : 'ADJ'}
+                        </span>
+                        <span className="text-xs text-muted-foreground">{card.frequency} mentions</span>
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${SCORE_DOT(card.scores.opportunity)}`} />
+                        <span className="text-xs text-muted-foreground">{card.scores.opportunity}</span>
+                      </div>
+                    </div>
+                    {isDone ? (
+                      <span className="text-xs text-emerald-400 flex-shrink-0 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" />Done
+                      </span>
+                    ) : (
+                      <button onClick={() => handleGenerate(card)} disabled={isGen}
+                        className="flex items-center gap-1 text-xs px-2.5 py-1 bg-primary text-primary-foreground rounded font-bold hover:bg-primary/90 disabled:opacity-50 transition-colors flex-shrink-0">
+                        {isGen ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                        {isGen ? 'Generating…' : 'Generate'}
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+              {topCards.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-8">No opportunities available. Import creators first.</p>
+              )}
             </div>
-            <div className="space-y-1.5 mb-3">
-              <ScoreBar label="Demand"     value={card.scores.demand}     color="text-amber-400" />
-              <ScoreBar label="Engagement" value={card.scores.engagement} color="text-blue-400" />
-              <ScoreBar label="Relevance"  value={card.scores.relevance}  color="text-violet-400" />
+          </div>
+
+          {/* Right: Saved recommendations */}
+          <div>
+            <h2 className="text-sm font-bold mb-1">Saved Recommendations</h2>
+            <p className="text-xs text-muted-foreground mb-3">Click any card to view full details.</p>
+            {loadingRecs && recs.length === 0 && (
+              <div className="flex justify-center py-8"><Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /></div>
+            )}
+            <div className="space-y-2">
+              {recs.map(rec => {
+                const StatusIcon = STATUS_ICONS[rec.status as RecommendationStatus] || Clock
+                return (
+                  <div key={rec.id} onClick={() => setSelectedRec(rec)}
+                    className="bg-card border border-border rounded-lg px-3 py-3 cursor-pointer hover:border-primary/30 transition-colors group">
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${rec.classification === 'finniki' ? 'bg-amber-400/15 text-amber-400' : 'bg-secondary text-muted-foreground'}`}>
+                            {rec.classification === 'finniki' ? 'FN' : 'ADJ'}
+                          </span>
+                          <span className={`flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded font-bold ${STATUS_STYLES[rec.status as RecommendationStatus]}`}>
+                            <StatusIcon className="w-3 h-3" />
+                            {rec.status}
+                          </span>
+                          <span className="text-xs text-muted-foreground ml-auto">{FORMAT_ICON[rec.format as RecommendationFormat]}</span>
+                        </div>
+                        <p className="text-xs font-semibold line-clamp-1 group-hover:text-primary transition-colors">
+                          {rec.suggested_title || rec.topic}
+                        </p>
+                        {rec.target_audience && (
+                          <p className="text-xs text-muted-foreground mt-0.5 truncate">→ {rec.target_audience}</p>
+                        )}
+                      </div>
+                      <div className={`text-lg font-black flex-shrink-0 ${PRIORITY_COLOR(rec.scores.priority)}`}>
+                        {rec.scores.priority}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 mt-2">
+                      {[
+                        { label: 'D', v: rec.scores.demand,     color: 'text-amber-400' },
+                        { label: 'E', v: rec.scores.engagement, color: 'text-blue-400' },
+                        { label: 'T', v: rec.scores.trend,      color: 'text-emerald-400' },
+                        { label: 'R', v: rec.scores.relevance,  color: 'text-violet-400' },
+                      ].map(({ label, v, color }) => (
+                        <div key={label} className="flex items-center gap-0.5 text-xs">
+                          <span className="text-muted-foreground">{label}</span>
+                          <span className={`font-bold ${color}`}>{v}</span>
+                        </div>
+                      ))}
+                      <span className="text-xs text-muted-foreground ml-auto">
+                        {Math.round(rec.scores.confidence * 100)}% conf.
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+              {recs.length === 0 && !loadingRecs && (
+                <p className="text-xs text-muted-foreground text-center py-8">
+                  No recommendations yet. Click Generate on an opportunity.
+                </p>
+              )}
             </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className={`px-1.5 py-0.5 rounded font-bold ${FORMAT_COLORS[card.format]}`}>{FORMAT_LABELS[card.format]}-form</span>
-              <span className="truncate">{card.category}</span>
-              <TREND_ICON trend={card.trend} />
-              <span className="ml-auto">{card.frequency}×</span>
-            </div>
-            {card.unique_users > 0 && (
-              <div className="flex items-center gap-1 mt-1.5 text-xs text-muted-foreground">
-                <Users className="w-3 h-3" />{card.unique_users} unique users
+            {recs.length < totalRecs && (
+              <div ref={sentinelRef} className="py-3 flex justify-center">
+                {loadingRecs && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
               </div>
             )}
           </div>
-        ))}
-        {shown.length === 0 && (
-          <div className="col-span-3 text-center py-16 text-muted-foreground text-sm">
-            No data. Import creators with comments first.
-          </div>
-        )}
+        </div>
       </div>
-      {hasMore && <div ref={sentinelRef} className="h-10 flex items-center justify-center"><Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /></div>}
+
+      {/* Detail panel */}
+      {selectedRec && (
+        <RecommendationDetail
+          rec={selectedRec}
+          onClose={() => setSelectedRec(null)}
+          onStatusChange={handleStatusChange}
+          onDelete={handleDelete}
+        />
+      )}
     </div>
   )
 }
@@ -977,7 +1383,7 @@ export default function AIContentStrategyPage() {
 
         <div className={pageTab === 'recommendations' ? 'h-full' : 'hidden'}>
           {visited.has('recommendations') && (
-            <RecommendationsTab filtered={filtered} onCardClick={setActiveCard} />
+            <RecommendationsTab filtered={filtered} />
           )}
         </div>
 

@@ -152,3 +152,48 @@ class AppSettings(Base):
     key = Column(String(128), unique=True, nullable=False)
     value = Column(Text)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ContentRecommendation(Base):
+    __tablename__ = "content_recommendations"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Source
+    topic = Column(String(512), nullable=False)
+    original_topic = Column(String(512))
+    category = Column(String(128))
+    classification = Column(String(32))          # finniki | adjacent
+    creator_ids_filter = Column(JSON)            # which creators were in scope
+
+    # Scores (0-100 integers)
+    demand_score = Column(Integer, default=0)
+    engagement_score = Column(Integer, default=0)
+    trend_score = Column(Integer, default=0)
+    relevance_score = Column(Integer, default=0)
+    priority_score = Column(Integer, default=0)
+    confidence_score = Column(Float, default=0)  # 0.0-1.0
+
+    # Raw metrics (for later re-scoring)
+    frequency = Column(Integer, default=0)
+    unique_users = Column(Integer, default=0)
+    avg_likes = Column(Float, default=0)
+    growth_rate = Column(Float, default=0)
+    trend = Column(String(16))
+
+    # Generated content (AI-produced)
+    suggested_title = Column(Text)
+    suggested_hook = Column(Text)
+    format = Column(String(32))                  # long | short | series
+    target_audience = Column(String(256))
+    talking_points = Column(JSON)                # list[str]
+    faqs = Column(JSON)                          # list[{q, a}]
+    misconceptions = Column(JSON)                # list[str]
+    explanation = Column(Text)                   # why this scored high
+
+    # Workflow
+    status = Column(String(32), default='draft') # draft | reviewed | approved | published
+    notes = Column(Text)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

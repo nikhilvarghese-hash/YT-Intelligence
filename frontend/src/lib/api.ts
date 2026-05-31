@@ -675,3 +675,98 @@ export const queryIntent = (query: string, creatorIds?: number[]) =>
     method: 'POST',
     body: JSON.stringify({ query, creator_ids: creatorIds ?? [] }),
   })
+
+// ─── Content Recommendation Engine ───────────────────────────────────────────
+
+export interface RecommendationScores {
+  demand: number
+  engagement: number
+  trend: number
+  relevance: number
+  priority: number
+  confidence: number
+}
+
+export interface RecommendationFAQ {
+  q: string
+  a: string
+}
+
+export type RecommendationStatus = 'draft' | 'reviewed' | 'approved' | 'published'
+export type RecommendationFormat = 'long' | 'short' | 'series'
+
+export interface Recommendation {
+  id: number
+  topic: string
+  original_topic: string
+  category: string
+  classification: 'finniki' | 'adjacent'
+  scores: RecommendationScores
+  frequency: number
+  unique_users: number
+  avg_likes: number
+  growth_rate: number
+  trend: 'growing' | 'stable' | 'declining'
+  suggested_title: string
+  suggested_hook: string
+  format: RecommendationFormat
+  target_audience: string
+  talking_points: string[]
+  faqs: RecommendationFAQ[]
+  misconceptions: string[]
+  explanation: string
+  status: RecommendationStatus
+  notes: string | null
+  creator_ids_filter: number[]
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface RecommendationPage {
+  items: Recommendation[]
+  total: number
+  page: number
+  has_more: boolean
+}
+
+export const listRecommendations = (params?: {
+  status?: RecommendationStatus
+  classification?: string
+  minPriority?: number
+  page?: number
+  pageSize?: number
+}) => {
+  const p = new URLSearchParams({
+    page: String(params?.page ?? 1),
+    page_size: String(params?.pageSize ?? 50),
+  })
+  if (params?.status) p.set('status', params.status)
+  if (params?.classification) p.set('classification', params.classification)
+  if (params?.minPriority) p.set('min_priority', String(params.minPriority))
+  return fetchAPI<RecommendationPage>(`/recommendations/?${p}`)
+}
+
+export const generateRecommendation = (card: {
+  topic: string
+  original_topic?: string
+  category: string
+  classification: string
+  frequency: number
+  unique_users: number
+  avg_likes: number
+  growth_rate: number
+  trend: string
+  example_comments: string[]
+  creator_ids?: number[]
+  finniki_confidence?: number
+}) =>
+  fetchAPI<Recommendation>('/recommendations/generate', {
+    method: 'POST',
+    body: JSON.stringify(card),
+  })
+
+export const updateRecommendation = (id: number, patch: Partial<Pick<Recommendation, 'status' | 'notes' | 'suggested_title' | 'talking_points' | 'faqs' | 'misconceptions'>>) =>
+  fetchAPI(`/recommendations/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
+
+export const deleteRecommendation = (id: number) =>
+  fetchAPI(`/recommendations/${id}`, { method: 'DELETE' })
