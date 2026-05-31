@@ -110,7 +110,7 @@ def get_video_topics(
         score = _engagement_score(total_views, total_likes, total_comments)
 
         # Top 5 videos by views for this keyword
-        top_vids = sorted(vids, key=lambda v: v.views or 0, reverse=True)[:5]
+        top_vids = sorted(vids, key=lambda v: v.views or 0, reverse=True)[:20]
 
         results.append({
             "keyword": kw,
