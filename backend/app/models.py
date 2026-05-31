@@ -230,3 +230,65 @@ class ContentBrief(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ── Ask Finniki RAG tables ────────────────────────────────────────────────────
+
+class RAGDocument(Base):
+    """One-to-one with a source record; tracks whether it's been indexed."""
+    __tablename__ = "rag_documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_type = Column(String(64), nullable=False, index=True)  # comment | video | reply
+    source_id = Column(String(128), nullable=False, index=True)
+    content_hash = Column(String(64), nullable=False, index=True)
+    creator_id = Column(Integer, ForeignKey("creators.id", ondelete="CASCADE"), nullable=True, index=True)
+    indexed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    chunks = relationship("RAGChunk", back_populates="document", cascade="all, delete-orphan")
+
+
+class RAGChunk(Base):
+    """A text chunk derived from a RAGDocument."""
+    __tablename__ = "rag_chunks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("rag_documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    chunk_index = Column(Integer, nullable=False, default=0)
+    chunk_hash = Column(String(64), nullable=False)
+    chunk_text = Column(Text, nullable=False)
+    metadata_json = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    document = relationship("RAGDocument", back_populates="chunks")
+    embedding = relationship("RAGEmbedding", back_populates="chunk", uselist=False, cascade="all, delete-orphan")
+
+
+class RAGEmbedding(Base):
+    """Embedding vector stored as JSON float array (SQLite-compatible)."""
+    __tablename__ = "rag_embeddings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    chunk_id = Column(Integer, ForeignKey("rag_chunks.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    embedding = Column(Text, nullable=False)
+    embedding_model = Column(String(128), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    chunk = relationship("RAGChunk", back_populates="embedding")
+
+
+class RAGQueryLog(Base):
+    """Audit log of all Ask Finniki queries."""
+    __tablename__ = "rag_query_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    query = Column(Text, nullable=False)
+    response = Column(Text)
+    confidence = Column(Float)
+    sources_used = Column(Integer, default=0)
+    retrieved_chunks = Column(Integer, default=0)
+    execution_time_ms = Column(Integer)
+    created_at = Column(DateTime, default=datetime.utcnow)

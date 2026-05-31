@@ -4,6 +4,7 @@ import { useState, useRef, FormEvent } from 'react'
 import Link from 'next/link'
 import { Search, ArrowRight, Loader2, Sparkles, AlertCircle } from 'lucide-react'
 import { queryIntent, IntentResult } from '@/lib/api'
+import { AskFinniki } from './AskFinniki'
 
 const EXAMPLES = [
   'What topics are my audience asking about?',
@@ -59,7 +60,6 @@ function PreviewSection({ preview }: { preview: Record<string, unknown> }) {
     )
   }
 
-  // Generic list fallback
   return (
     <ul className="space-y-1 list-disc list-inside">
       {items.map((item, i) => (
@@ -71,7 +71,7 @@ function PreviewSection({ preview }: { preview: Record<string, unknown> }) {
   )
 }
 
-export default function IntentPage() {
+function IntentSearch() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<IntentResult | null>(null)
@@ -104,7 +104,6 @@ export default function IntentPage() {
 
   return (
     <div className="flex flex-col items-center min-h-full px-6 py-16 gap-8">
-      {/* Header */}
       <div className="text-center space-y-2 max-w-lg">
         <div className="flex items-center justify-center gap-2 text-primary mb-2">
           <Sparkles className="w-5 h-5" />
@@ -116,7 +115,6 @@ export default function IntentPage() {
         </p>
       </div>
 
-      {/* Search form */}
       <form onSubmit={handleSubmit} className="w-full max-w-xl">
         <div className="flex gap-2">
           <div className="relative flex-1">
@@ -141,7 +139,6 @@ export default function IntentPage() {
         </div>
       </form>
 
-      {/* Example prompts */}
       {!result && !loading && (
         <div className="flex flex-wrap gap-2 justify-center max-w-xl">
           {EXAMPLES.map(ex => (
@@ -156,7 +153,6 @@ export default function IntentPage() {
         </div>
       )}
 
-      {/* Error */}
       {error && (
         <div className="flex items-center gap-2 text-destructive text-sm max-w-xl w-full bg-destructive/10 px-4 py-3 rounded-lg">
           <AlertCircle className="w-4 h-4 flex-shrink-0" />
@@ -164,10 +160,8 @@ export default function IntentPage() {
         </div>
       )}
 
-      {/* Result */}
       {result && (
         <div className="w-full max-w-xl space-y-4">
-          {/* Intent badge */}
           <div className="flex items-start justify-between gap-4">
             <div>
               <span className="inline-block text-xs font-semibold uppercase tracking-widest text-primary bg-primary/10 px-2 py-0.5 rounded mb-1">
@@ -183,7 +177,6 @@ export default function IntentPage() {
             </Link>
           </div>
 
-          {/* Preview */}
           <div className="border border-border rounded-lg p-4 bg-secondary/30 space-y-2">
             <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
               Preview
@@ -191,13 +184,54 @@ export default function IntentPage() {
             <PreviewSection preview={result.preview} />
           </div>
 
-          {/* Meta */}
           <div className="flex gap-4 text-xs text-muted-foreground">
             <span>Period: {result.period} days</span>
             {result.topic && <span>Topic filter: {result.topic}</span>}
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+type Tab = 'intent' | 'finniki'
+
+export default function IntentPage() {
+  const [tab, setTab] = useState<Tab>('intent')
+
+  return (
+    <div className="flex flex-col h-screen">
+      {/* Tab bar */}
+      <div className="border-b bg-background px-6">
+        <div className="flex gap-0">
+          {([
+            { id: 'intent' as Tab, label: 'Intent Search' },
+            { id: 'finniki' as Tab, label: 'Ask Finniki', badge: 'AI' },
+          ] as const).map(t => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`flex items-center gap-1.5 px-4 py-3 text-sm border-b-2 transition-colors ${
+                tab === t.id
+                  ? 'border-primary text-primary font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {t.label}
+              {'badge' in t && (
+                <span className="text-[10px] font-bold bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 px-1.5 py-0.5 rounded-full">
+                  {t.badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Tab content */}
+      <div className="flex-1 overflow-y-auto">
+        {tab === 'intent' ? <IntentSearch /> : <AskFinniki />}
+      </div>
     </div>
   )
 }

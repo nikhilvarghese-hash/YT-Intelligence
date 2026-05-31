@@ -905,3 +905,97 @@ export const deleteBrief = (id: number) =>
 
 export const getCalendar = (year: number, month: number) =>
   fetchAPI<{ items: ContentBrief[] }>(`/content-planner/calendar?year=${year}&month=${month}`)
+
+// ── Ask Finniki ───────────────────────────────────────────────────────────────
+
+export interface FinnikiMeta {
+  confidence: number
+  sources_used: number
+  retrieved_chunks: number
+  retrieval_ms: number
+  stats: {
+    comments_analysed: number
+    videos_referenced: number
+    creators_referenced: number
+    total_chunks: number
+    top_intents: Record<string, number>
+    top_sentiments: Record<string, number>
+    top_topics: Record<string, number>
+  }
+}
+
+export interface FinnikiIndexStatus {
+  total_documents: number
+  indexed_documents: number
+  pending_documents: number
+  total_chunks: number
+  total_embeddings: number
+  is_indexing: boolean
+}
+
+export interface FinnikiAnalytics {
+  total_queries: number
+  avg_confidence: number
+  avg_execution_ms: number
+  success_rate: number
+  recent_queries: Array<{
+    query: string
+    confidence: number
+    sources_used: number
+    execution_ms: number
+    created_at: string
+  }>
+}
+
+export const getFinnikiIndexStatus = () =>
+  fetchAPI<FinnikiIndexStatus>('/ask-finniki/index/status')
+
+export const triggerFinnikiIndex = () =>
+  fetchAPI<{ status: string }>('/ask-finniki/index', { method: 'POST' })
+
+export const getFinnikiAnalytics = () =>
+  fetchAPI<FinnikiAnalytics>('/ask-finniki/analytics')
+
+const FINNIKI_BASE = process.env.NEXT_PUBLIC_API_URL
+  ? `${process.env.NEXT_PUBLIC_API_URL}/api/ask-finniki`
+  : '/api/ask-finniki'
+
+export function askFinniki(query: string, creatorIds?: number[]): EventSource {
+  // Can't POST with EventSource; use a GET-compatible approach via fetch + ReadableStream
+  // We expose a helper that returns a ReadableStream instead
+  throw new Error('Use askFinnikiStream instead')
+}
+
+export async function* askFinnikiStream(
+  query: string,
+  creatorIds?: number[],
+): AsyncGenerator<{ type: string; [key: string]: unknown }> {
+  const resp = await fetch(`${FINNIKI_BASE}/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, creator_ids: creatorIds }),
+  })
+  if (!resp.ok || !resp.body) {
+    throw new Error(`Ask Finniki request failed: ${resp.status}`)
+  }
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      if (!line.startsWith('data:')) continue
+      const data = line.slice(5).trim()
+      if (!data) continue
+      try {
+        yield JSON.parse(data)
+      } catch {
+        // skip malformed line
+      }
+    }
+  }
+}
