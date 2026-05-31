@@ -1,5 +1,6 @@
 """
-Hybrid retrieval: semantic (vector) + keyword matching.
+Hybrid retrieval: semantic (vector) + keyword pre-filter.
+Pre-filters candidates with SQL LIKE to avoid loading all 45k chunks into memory.
 Ranking: semantic_score * 0.6 + keyword_score * 0.3 + engagement * 0.1
 """
 from __future__ import annotations
@@ -8,12 +9,20 @@ import json
 import re
 from typing import Any, Optional
 
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
-from ...models import RAGChunk, RAGEmbedding
+from ...models import RAGChunk, RAGDocument, RAGEmbedding
 from .embedder import cosine_similarity, embed_query, build_tfidf_index, tfidf_vector, _STOP
 
-_TOP_K = 40  # chunks to retrieve before reranking
+_TOP_K = 40
+_PRE_FILTER_LIMIT = 500  # max candidates from SQL before ranking
+
+
+def _query_keywords(query: str) -> list[str]:
+    """Extract meaningful words from query for SQL pre-filtering."""
+    words = re.findall(r"[a-z]{3,}", query.lower())
+    return [w for w in words if w not in _STOP]
 
 
 async def retrieve(
@@ -23,25 +32,33 @@ async def retrieve(
     source_types: Optional[list[str]] = None,
     top_k: int = _TOP_K,
 ) -> list[dict[str, Any]]:
-    """
-    Return ranked list of chunk dicts with scores and metadata.
-    """
-    # Load candidate chunks from DB (filter by creator/type before loading)
-    q = db.query(RAGChunk)
+    """Return ranked chunk dicts."""
+
+    keywords = _query_keywords(query)
+
+    # ── SQL pre-filter: get candidates matching any keyword ───────────────────
+    q = db.query(RAGChunk).join(RAGDocument, RAGChunk.document_id == RAGDocument.id)
+
     if creator_ids:
-        q = q.join(RAGChunk.document).filter_by  # join via document
-        from ...models import RAGDocument
-        q = db.query(RAGChunk).join(RAGDocument, RAGChunk.document_id == RAGDocument.id)
-        if creator_ids:
-            q = q.filter(RAGDocument.creator_id.in_(creator_ids))
-        if source_types:
-            q = q.filter(RAGDocument.source_type.in_(source_types))
-    elif source_types:
-        from ...models import RAGDocument
-        q = db.query(RAGChunk).join(RAGDocument, RAGChunk.document_id == RAGDocument.id)
+        q = q.filter(RAGDocument.creator_id.in_(creator_ids))
+    if source_types:
         q = q.filter(RAGDocument.source_type.in_(source_types))
 
-    chunks = q.all()
+    if keywords:
+        like_filters = [RAGChunk.chunk_text.ilike(f"%{kw}%") for kw in keywords[:6]]
+        q = q.filter(or_(*like_filters))
+
+    chunks = q.limit(_PRE_FILTER_LIMIT).all()
+
+    if not chunks:
+        # Fallback: no keyword match — grab a general sample
+        q2 = db.query(RAGChunk).join(RAGDocument, RAGChunk.document_id == RAGDocument.id)
+        if creator_ids:
+            q2 = q2.filter(RAGDocument.creator_id.in_(creator_ids))
+        if source_types:
+            q2 = q2.filter(RAGDocument.source_type.in_(source_types))
+        chunks = q2.limit(200).all()
+
     if not chunks:
         return []
 
@@ -49,10 +66,10 @@ async def retrieve(
     chunk_metas = [c.metadata_json or {} for c in chunks]
 
     # ── Keyword scores ────────────────────────────────────────────────────────
-    query_words = set(re.findall(r"[a-z]{2,}", query.lower())) - _STOP
+    query_words = set(keywords)
     keyword_scores = []
-    for text in chunk_texts:
-        text_words = set(re.findall(r"[a-z]{2,}", text.lower()))
+    for text_content in chunk_texts:
+        text_words = set(re.findall(r"[a-z]{3,}", text_content.lower())) - _STOP
         if not text_words:
             keyword_scores.append(0.0)
             continue
@@ -62,8 +79,8 @@ async def retrieve(
     # ── Semantic scores ───────────────────────────────────────────────────────
     semantic_scores = [0.0] * len(chunks)
     query_vec = await embed_query(query)
+
     if query_vec:
-        # Load embeddings for these chunk IDs
         chunk_id_to_idx = {c.id: i for i, c in enumerate(chunks)}
         emb_rows = db.query(RAGEmbedding).filter(
             RAGEmbedding.chunk_id.in_(list(chunk_id_to_idx.keys()))
@@ -76,24 +93,19 @@ async def retrieve(
             except Exception:
                 pass
     else:
-        # Fallback: TF-IDF similarity
+        # TF-IDF only on the pre-filtered subset (fast)
         vocab, idf = build_tfidf_index(chunk_texts)
         q_vec = tfidf_vector(query, vocab, idf)
-        for i, text in enumerate(chunk_texts):
-            c_vec = tfidf_vector(text, vocab, idf)
+        for i, text_content in enumerate(chunk_texts):
+            c_vec = tfidf_vector(text_content, vocab, idf)
             semantic_scores[i] = cosine_similarity(q_vec, c_vec)
 
     # ── Engagement normalisation ──────────────────────────────────────────────
-    engagement_scores = []
-    max_eng = 1
-    for meta in chunk_metas:
-        e = meta.get("engagement_score", 0) or 0
-        engagement_scores.append(e)
-        if e > max_eng:
-            max_eng = e
-    engagement_scores = [e / max_eng for e in engagement_scores]
+    eng_raw = [float(m.get("engagement_score", 0) or 0) for m in chunk_metas]
+    max_eng = max(eng_raw) or 1.0
+    engagement_scores = [e / max_eng for e in eng_raw]
 
-    # ── Combined rank ─────────────────────────────────────────────────────────
+    # ── Combined ranking ──────────────────────────────────────────────────────
     scored = []
     for i, chunk in enumerate(chunks):
         score = (
