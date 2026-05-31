@@ -37,6 +37,11 @@
   }
 }
 
+/* Safe area for iPhone notch / home bar */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
