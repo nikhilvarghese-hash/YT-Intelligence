@@ -95,18 +95,12 @@ setup_frontend() {
     ok "Frontend node_modules already present"
   fi
 
-  # Detect LAN IP so the frontend API URL works from mobile devices too
-  local lan_ip
-  lan_ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "")
-  local api_host="${lan_ip:-localhost}"
-
+  # API calls are proxied through Next.js rewrites — no NEXT_PUBLIC_API_URL needed.
+  # The rewrite in next.config.mjs forwards /api/* to the backend server-side,
+  # so the app works from any device (phone, Tailscale, LAN) without reconfiguration.
   if [[ ! -f "frontend/.env.local" ]]; then
-    echo "NEXT_PUBLIC_API_URL=http://${api_host}:${BACKEND_PORT}" > frontend/.env.local
-    ok "Created frontend/.env.local (API URL: http://${api_host}:${BACKEND_PORT})"
-  else
-    # Update the API URL to reflect current IP (it changes on network switches)
-    sed -i '' "s|^NEXT_PUBLIC_API_URL=.*|NEXT_PUBLIC_API_URL=http://${api_host}:${BACKEND_PORT}|" frontend/.env.local
-    ok "Updated frontend/.env.local API URL → http://${api_host}:${BACKEND_PORT}"
+    touch frontend/.env.local
+    ok "Created frontend/.env.local"
   fi
 }
 
